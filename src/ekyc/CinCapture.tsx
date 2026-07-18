@@ -16,6 +16,7 @@ export function CinCapture({
 }) {
   const [side, setSide] = useState<'front' | 'back'>('front');
   const [processing, setProcessing] = useState(false);
+  const [scanWarning, setScanWarning] = useState<string | null>(null);
   const [captureMode, setCaptureMode] = useState<'camera' | 'upload'>('upload');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -92,21 +93,37 @@ export function CinCapture({
         console.log(`OCR Progress: ${progress.toFixed(0)}%`);
       });
       
+      // Field extraction is label-driven, so a value is only written when it
+      // was actually read off the card. Assigning unconditionally used to wipe
+      // a good earlier value whenever a later scan missed a field.
+      const f = ocrResult.fields;
+      const update: Record<string, string> = {};
+      if (ocrResult.fullName) update.fullName = ocrResult.fullName;
+      if (ocrResult.dob) update.dob = ocrResult.dob;
+      if (ocrResult.cinNumber) update.cinNumber = ocrResult.cinNumber;
+      if (ocrResult.address) update.address = ocrResult.address;
+
       if (side === 'front') {
-        onUpdate({ 
-          frontImage: imageData,
-          fullName: ocrResult.fullName,
-          dob: ocrResult.dob,
-          cinNumber: ocrResult.cinNumber
-        });
+        onUpdate({ frontImage: imageData, ...update });
         setProcessing(false);
         setSide('back');
       } else {
-        onUpdate({ 
-          backImage: imageData,
-          address: ocrResult.address
-        });
+        onUpdate({ backImage: imageData, ...update });
         setProcessing(false);
+      }
+
+      // Tell the user plainly when a photo produced nothing usable, instead of
+      // silently advancing with empty fields.
+      if (f && f.found.length === 0) {
+        setScanWarning(
+          "Aucun champ n'a pu être lu sur cette photo. Cadrez la carte à plat, sans reflet, et réessayez."
+        );
+      } else if (f && f.side !== 'unknown' && f.side !== side) {
+        setScanWarning(
+          `Cette photo ressemble au ${f.side === 'back' ? 'verso' : 'recto'} de la carte. Les champs lus ont été conservés.`
+        );
+      } else {
+        setScanWarning(null);
       }
     } catch (error) {
       console.error('OCR error:', error);
@@ -168,6 +185,9 @@ export function CinCapture({
           <div className="preview-overlay">
             <span className="badge badge-green">✓ {side.toUpperCase()} {t('captured')}</span>
           </div>
+          {scanWarning && (
+            <p className="scan-warning" role="status">⚠️ {scanWarning}</p>
+          )}
         </div>
       ) : captureMode === 'camera' ? (
         <div className="camera-view">

@@ -1,4 +1,5 @@
 import Tesseract from 'tesseract.js';
+import { parseCin, type CinFields } from './cin';
 
 export interface OcrResult {
   fullName: string;
@@ -6,6 +7,8 @@ export interface OcrResult {
   cinNumber: string;
   address: string;
   confidence: number;
+  /** Everything the Tunisian CIN parser recovered, beyond the four legacy fields. */
+  fields?: CinFields;
 }
 
 /**
@@ -33,17 +36,25 @@ export async function extractCinData(
 
     console.log('OCR Text:', text);
 
-    // Parse the extracted text
-    const result = side === 'front' 
-      ? parseFrontSide(text) 
-      : parseBackSide(text);
+    // Label-driven parse against the real Tunisian CIN layout (اللقب / الاسم /
+    // تاريخ الولادة / مكانها on the front, اسم ولقب الأم / العنوان on the back).
+    // The old heuristic took the longest line as the name, which on this card
+    // is the "الجمهورية التونسية" header.
+    const fields = parseCin(text, side);
 
     // Cleanup
     await worker.terminate();
 
     return {
-      ...result,
-      confidence: data.confidence,
+      // Prefer the Latin-script name when the card carries one, else Arabic.
+      fullName: fields.fullNameFr || fields.fullNameAr,
+      dob: fields.dob,
+      cinNumber: fields.cin,
+      address: fields.address,
+      // Tesseract's own 0-100 score reflects glyph confidence, not whether we
+      // found the fields that matter — report the lower of the two.
+      confidence: Math.min(data.confidence, fields.confidence * 100),
+      fields,
     };
   } catch (error) {
     console.error('OCR Error:', error);
@@ -56,92 +67,6 @@ export async function extractCinData(
       confidence: 0,
     };
   }
-}
-
-/**
- * Parse front side of Tunisian CIN
- * Contains: Full name, Date of birth, CIN number
- */
-function parseFrontSide(text: string): Omit<OcrResult, 'confidence'> {
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-  
-  let fullName = '';
-  let dob = '';
-  let cinNumber = '';
-
-  // Try to find CIN number (8 digits)
-  const cinMatch = text.match(/\b\d{8}\b/);
-  if (cinMatch) {
-    cinNumber = cinMatch[0];
-  }
-
-  // Try to find date of birth (format: DD/MM/YYYY or DD-MM-YYYY)
-  const dobMatch = text.match(/\b(\d{2})[\/\-](\d{2})[\/\-](\d{4})\b/);
-  if (dobMatch) {
-    dob = `${dobMatch[1]}/${dobMatch[2]}/${dobMatch[3]}`;
-  }
-
-  // Try to find full name (usually the longest Arabic or French text line)
-  // Look for lines with actual letters (not just numbers/symbols)
-  const nameLines = lines.filter(line => {
-    // Check if line contains Arabic or French letters
-    const hasLetters = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z]/.test(line);
-    // Exclude lines that are mostly numbers or very short
-    const notMostlyNumbers = !/^\d+$/.test(line);
-    const longEnough = line.length > 5;
-    return hasLetters && notMostlyNumbers && longEnough;
-  });
-
-  if (nameLines.length > 0) {
-    // Take the longest line as the name
-    fullName = nameLines.reduce((longest, current) => 
-      current.length > longest.length ? current : longest
-    , '');
-  }
-
-  return {
-    fullName: cleanText(fullName),
-    dob,
-    cinNumber,
-    address: '',
-  };
-}
-
-/**
- * Parse back side of Tunisian CIN
- * Contains: Address
- */
-function parseBackSide(text: string): Omit<OcrResult, 'confidence'> {
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-  
-  // The back usually contains the address
-  // Look for lines with actual content (not just labels)
-  const addressLines = lines.filter(line => {
-    const hasLetters = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFFa-zA-Z]/.test(line);
-    const longEnough = line.length > 10;
-    // Exclude common label words
-    const notLabel = !/(adresse|address|عنوان)/i.test(line);
-    return hasLetters && longEnough && notLabel;
-  });
-
-  const address = addressLines.join(', ');
-
-  return {
-    fullName: '',
-    dob: '',
-    cinNumber: '',
-    address: cleanText(address),
-  };
-}
-
-/**
- * Clean extracted text (remove extra spaces, special chars)
- */
-function cleanText(text: string): string {
-  return text
-    .replace(/\s+/g, ' ') // Multiple spaces → single space
-    .replace(/[|_]/g, '') // Remove common OCR artifacts
-    .trim();
 }
 
 /**

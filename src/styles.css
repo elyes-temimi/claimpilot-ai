@@ -1824,3 +1824,16 @@ body {
 .user-dropdown-item.danger:hover {
   background: #fef2f2;
 }
+
+/* CIN scan feedback — shown when a photo yields no readable fields, or when
+   the captured face looks like the other side of the card. */
+.scan-warning {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #b45309;
+  font-size: 13px;
+  line-height: 1.4;
+}
