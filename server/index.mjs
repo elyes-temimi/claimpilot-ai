@@ -8,7 +8,7 @@ import { networkInterfaces } from 'node:os';
 import { createHash, createSign, createVerify, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { screenName } from './amlData.mjs';
-import { nextStep } from './policyEngine.mjs';
+import { nextStep, policyOptions } from './policyEngine.mjs';
 import { dbStatus, getCase, initDb, listFlaggedCases } from './db.mjs';
 import { llmStatus } from './llm.mjs';
 import { enrichEstimate, estimateRepair } from './repairEstimate.mjs';
@@ -94,6 +94,14 @@ app.post('/api/profile/verify', (req, res) => {
 app.post('/api/policy/step', (req, res) => {
   const { answers, profile } = req.body || {};
   res.json(nextStep(answers || {}, profile || {}));
+});
+
+// Every policy, scored and priced for these answers, best first.
+// The client shows the whole shelf so the customer can pick a different tier
+// or decline entirely — subscribing is never required to finish eKYC.
+app.post('/api/policy/options', (req, res) => {
+  const { answers, profile } = req.body || {};
+  res.json(policyOptions(answers || {}, profile || {}));
 });
 
 // --- Shared Accident Session ----------------------------------------------

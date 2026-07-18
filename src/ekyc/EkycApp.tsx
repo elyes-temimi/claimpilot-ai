@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CinCapture } from './CinCapture';
 import { LivenessCheck } from './LivenessCheck';
 import { ProfileForm } from './ProfileForm';
@@ -39,7 +39,8 @@ export function EkycApp({ onComplete }: { onComplete: (data: EkycState) => void 
     setState(s => ({ ...s, profile }));
   };
 
-  const updatePolicy = (policy: PolicyMatch) => {
+  // null means the customer declined — a valid, recorded outcome.
+  const updatePolicy = (policy: PolicyMatch | null) => {
     setState(s => ({ ...s, policy }));
   };
 
@@ -126,20 +127,27 @@ export function EkycApp({ onComplete }: { onComplete: (data: EkycState) => void 
           <ProfileForm
             onSubmit={(profile) => {
               updateProfile(profile);
-              // Get policy match
-              getPolicyMatch(profile).then(policy => {
-                updatePolicy(policy);
-                nextStep();
-              });
+              nextStep();
             }}
             onBack={prevStep}
           />
         )}
-        
-        {state.step === 6 && state.policy && (
-          <PolicyMatchStep
-            policy={state.policy}
-            onNext={nextStep}
+
+        {/* Options are fetched by the step itself, from answers the user gives
+            there — previously this was gated on a policy fetched in advance
+            from the eKYC profile, which is why it never varied. */}
+        {state.step === 6 && (
+          <PolicyOptionsStep
+            profile={state.profile}
+            selected={state.policy}
+            onChoose={(policy) => {
+              updatePolicy(policy);
+              nextStep();
+            }}
+            onDecline={() => {
+              updatePolicy(null);
+              nextStep();
+            }}
             onBack={prevStep}
           />
         )}
@@ -374,33 +382,190 @@ function ScreeningStep({
   );
 }
 
-function PolicyMatchStep({
-  policy,
-  onNext,
-  onBack
+interface PolicyOption {
+  id: string;
+  name: string;
+  tier: number;
+  tagline: string;
+  covers: string[];
+  notCovered: string[];
+  premiumTND: number;
+  recommended: boolean;
+  fit: number;
+}
+
+/** The questions that actually move the recommendation. */
+const POLICY_QUESTIONS: {
+  id: string;
+  label: string;
+  options: { value: string; label: string }[];
+}[] = [
+  { id: 'vehicle_age', label: 'Âge du véhicule', options: [
+    { value: 'new', label: 'Neuf' }, { value: '1-3', label: '1–3 ans' },
+    { value: '4-8', label: '4–8 ans' }, { value: '9+', label: '9 ans et +' }] },
+  { id: 'vehicle_value', label: 'Valeur (TND)', options: [
+    { value: 'lt20', label: '< 20 000' }, { value: '20-50', label: '20–50 000' },
+    { value: '50-100', label: '50–100 000' }, { value: 'gt100', label: '> 100 000' }] },
+  { id: 'financing', label: 'Financement', options: [
+    { value: 'cash', label: 'Payé comptant' }, { value: 'credit', label: 'Crédit' },
+    { value: 'leasing', label: 'Leasing' }] },
+  { id: 'parking', label: 'Stationnement la nuit', options: [
+    { value: 'garage', label: 'Garage fermé' }, { value: 'guarded', label: 'Parking gardé' },
+    { value: 'street', label: 'Dans la rue' }] },
+  { id: 'usage', label: 'Usage', options: [
+    { value: 'commute', label: 'Trajets quotidiens' }, { value: 'occasional', label: 'Occasionnel' },
+    { value: 'professional', label: 'Professionnel' }] },
+  { id: 'record', label: 'Sinistres (3 ans)', options: [
+    { value: 'none', label: 'Aucun' }, { value: 'one', label: 'Un' }, { value: 'multi', label: 'Plusieurs' }] },
+  { id: 'priority', label: 'Ce qui compte le plus', options: [
+    { value: 'price', label: 'Le prix' }, { value: 'balanced', label: 'Équilibre' },
+    { value: 'protection', label: 'La protection' }] },
+];
+
+/**
+ * The whole shelf, priced for the customer's answers — not a single verdict.
+ * Declining is a first-class outcome: eKYC stands on its own and subscribing
+ * has never been required to file a constat.
+ */
+function PolicyOptionsStep({
+  profile,
+  selected,
+  onChoose,
+  onDecline,
+  onBack,
 }: {
-  policy: PolicyMatch;
-  onNext: () => void;
+  profile: ProfileData | null;
+  selected: PolicyMatch | null;
+  onChoose: (p: PolicyMatch) => void;
+  onDecline: () => void;
   onBack: () => void;
 }) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [options, setOptions] = useState<PolicyOption[]>([]);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [chosenId, setChosenId] = useState<string | null>(selected?.id ?? null);
+  const [loading, setLoading] = useState(true);
+
+  // Re-price on every answer change, so the effect of each choice is visible.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch('/api/policy/options', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers, profile: profile || {} }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        setOptions(d.options || []);
+        setReasons(d.reasons || []);
+        setChosenId((cur) => cur ?? (d.options || []).find((o: PolicyOption) => o.recommended)?.id ?? null);
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [answers, profile]);
+
+  const answered = Object.keys(answers).length;
+  const chosen = options.find((o) => o.id === chosenId) || null;
+
   return (
     <div className="card ekyc-card">
-      <h2>🎯 Your Matched Policy</h2>
-      <div className="policy-card">
-        <h3>{policy.name}</h3>
-        <div className="policy-confidence">{policy.confidence}% match</div>
-        <p className="policy-tagline">{policy.tagline}</p>
-        <div className="policy-covers">
-          {policy.covers.map((cover, i) => (
-            <div key={i} className="cover-item">✓ {cover}</div>
-          ))}
-        </div>
+      <h2>🛡️ Vos options d'assurance</h2>
+      <p className="fine">
+        Répondez à ce qui vous concerne — les tarifs se recalculent à chaque réponse.
+        Vous pouvez aussi continuer <strong>sans souscrire</strong> : votre vérification d'identité reste valable.
+      </p>
+
+      <div className="policy-quiz">
+        {POLICY_QUESTIONS.map((q) => (
+          <div key={q.id} className="policy-quiz-row">
+            <span className="policy-quiz-label">{q.label}</span>
+            <div className="policy-quiz-opts">
+              {q.options.map((o) => (
+                <button
+                  key={o.value}
+                  className={`chip ${answers[q.id] === o.value ? 'chip-on' : ''}`}
+                  onClick={() =>
+                    setAnswers((a) =>
+                      a[q.id] === o.value
+                        ? Object.fromEntries(Object.entries(a).filter(([k]) => k !== q.id))
+                        : { ...a, [q.id]: o.value }
+                    )
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
-      
+
+      {answered === 0 && (
+        <p className="fine">
+          Sans réponses, les formules sont affichées au tarif de base et aucune ne peut être
+          recommandée honnêtement.
+        </p>
+      )}
+
+      <div className={`policy-list ${loading ? 'is-loading' : ''}`}>
+        {options.map((o) => (
+          <button
+            key={o.id}
+            className={`policy-option ${chosenId === o.id ? 'selected' : ''}`}
+            onClick={() => setChosenId(o.id)}
+          >
+            <div className="policy-option-head">
+              <span className="policy-option-name">{o.name}</span>
+              {o.recommended && answered > 0 && <span className="badge badge-green">Recommandé</span>}
+              <span className="policy-option-price">{o.premiumTND} TND<small>/an</small></span>
+            </div>
+            <p className="policy-tagline">{o.tagline}</p>
+            {answered > 0 && (
+              <div className="policy-fit"><div className="policy-fit-bar" style={{ width: `${o.fit}%` }} /></div>
+            )}
+            {chosenId === o.id && (
+              <div className="policy-covers">
+                {o.covers.map((c, i) => <div key={i} className="cover-item">✓ {c}</div>)}
+                {o.notCovered.map((c, i) => <div key={i} className="cover-item cover-no">✕ {c}</div>)}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {reasons.length > 0 && answered > 0 && (
+        <ul className="policy-reasons">
+          {reasons.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      )}
+
       <div className="row">
-        <button className="btn btn-ghost" onClick={onBack}>← Back</button>
-        <button className="btn btn-danger" onClick={onNext}>
-          Accept & Continue →
+        <button className="btn btn-ghost" onClick={onBack}>← Retour</button>
+        <button
+          className="btn btn-danger"
+          disabled={!chosen}
+          onClick={() =>
+            chosen &&
+            onChoose({
+              id: chosen.id,
+              name: chosen.name,
+              tagline: chosen.tagline,
+              covers: chosen.covers,
+              confidence: chosen.fit,
+              premiumTND: chosen.premiumTND,
+            })
+          }
+        >
+          Souscrire {chosen ? `— ${chosen.name}` : ''} →
+        </button>
+      </div>
+
+      <div className="ekyc-skip">
+        <button className="linklike" onClick={onDecline}>
+          Non merci, continuer sans assurance →
         </button>
       </div>
     </div>
@@ -464,29 +629,3 @@ async function runScreening(cin: CinData): Promise<ScreeningResult> {
   }
 }
 
-async function getPolicyMatch(profile: ProfileData): Promise<PolicyMatch> {
-  try {
-    const res = await fetch('/api/policy/step', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers: profile, profile: {} })
-    });
-    const data = await res.json();
-    
-    // Mock response structure - adapt based on your API
-    return {
-      name: data.recommendation?.name || 'Tiers Confort',
-      tagline: data.recommendation?.tagline || 'Essential coverage for everyone',
-      covers: data.recommendation?.covers || ['Third party liability', 'Legal assistance'],
-      confidence: 75
-    };
-  } catch (error) {
-    console.error('Policy match error:', error);
-    return {
-      name: 'Tiers Confort',
-      tagline: 'Essential coverage',
-      covers: ['Third party liability'],
-      confidence: 70
-    };
-  }
-}

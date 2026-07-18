@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CinData } from './types';
 import { extractCinData } from '../lib/ocr';
 import { useTranslation } from '../i18n/useTranslation';
@@ -21,53 +21,101 @@ export function CinCapture({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  // A ref, not state: the cleanup function must always see the live stream,
+  // and storing it in state would retrigger the effect that created it.
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const { t } = useTranslation();
 
   const currentImage = side === 'front' ? cin.frontImage : cin.backImage;
   const hasImage = !!currentImage;
 
-  // Start camera
-  const startCamera = async () => {
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: 1280, height: 720 }
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        setStream(mediaStream);
-      }
-    } catch (error) {
-      console.error('Camera error:', error);
-      alert('Could not access camera. Please use file upload instead.');
-      setCaptureMode('upload');
-    }
-  };
+  // The camera is driven by state, not by a click handler.
+  //
+  // Two bugs lived in the old imperative version:
+  //  1. switchToCamera() called setCaptureMode('camera') and startCamera() back
+  //     to back. React had not mounted the <video> yet, so videoRef.current was
+  //     still null and the stream was acquired but never attached — a black box.
+  //  2. After capturing the FRONT, stopCamera() ran and the side flipped to
+  //     'back'. Nothing ever restarted the camera, so the back step showed a
+  //     dead <video> and the capture button drew a 0x0 canvas. That is why the
+  //     front worked and the back never did.
+  //
+  // Deriving the stream from (mode, side, hasImage) makes both impossible.
+  useEffect(() => {
+    const wanted = captureMode === 'camera' && !hasImage && !processing;
 
-  // Stop camera
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
+    if (!wanted) {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      return;
     }
-  };
+
+    let cancelled = false;
+    (async () => {
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        setCameraError(
+          "La caméra n'est disponible qu'en https. Ouvrez l'adresse https:// ou utilisez l'import de fichier."
+        );
+        setCaptureMode('upload');
+        return;
+      }
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
+        if (cancelled) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = s;
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+          // iOS Safari needs an explicit play() after srcObject is set.
+          await videoRef.current.play().catch(() => {});
+        }
+        setCameraError(null);
+      } catch (err) {
+        const name = (err as DOMException)?.name;
+        setCameraError(
+          name === 'NotAllowedError'
+            ? "Accès à la caméra refusé. Autorisez-le (icône 🔒 dans la barre d'adresse) ou importez un fichier."
+            : name === 'NotFoundError'
+              ? 'Aucune caméra détectée sur cet appareil.'
+              : "La caméra n'a pas pu démarrer. Utilisez l'import de fichier."
+        );
+        setCaptureMode('upload');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, [captureMode, side, hasImage, processing]);
 
   // Capture from camera
   const captureImage = () => {
-    if (!videoRef.current || !canvasRef.current) return;
-    
     const video = videoRef.current;
     const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    // A stream that has not produced a frame yet reports 0x0 and would silently
+    // yield a blank data URL — the old code captured that and "succeeded".
+    if (!video.videoWidth || !video.videoHeight) {
+      setCameraError("La caméra n'est pas encore prête — patientez une seconde et réessayez.");
+      return;
+    }
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     ctx.drawImage(video, 0, 0);
-    const imageData = canvas.toDataURL('image/jpeg', 0.8);
-    
-    processImage(imageData);
-    stopCamera();
+    setCameraError(null);
+    processImage(canvas.toDataURL('image/jpeg', 0.9));
   };
 
   // Handle file upload
@@ -137,16 +185,22 @@ export function CinCapture({
     }
   };
 
-  // Switch to camera mode
+  // Mode switches only set state — the effect above owns the stream lifecycle.
   const switchToCamera = () => {
+    setCameraError(null);
     setCaptureMode('camera');
-    startCamera();
   };
 
-  // Switch to upload mode
   const switchToUpload = () => {
+    setCameraError(null);
     setCaptureMode('upload');
-    stopCamera();
+  };
+
+  /** Discard the current side's photo so the camera restarts for a retake. */
+  const retake = () => {
+    setScanWarning(null);
+    setCameraError(null);
+    onUpdate(side === 'front' ? { frontImage: null } : { backImage: null });
   };
 
   const canContinue = cin.frontImage && cin.backImage;
@@ -154,9 +208,40 @@ export function CinCapture({
   return (
     <div className="card ekyc-card">
       <h2>📄 {t('cin_capture_title')}</h2>
+
+      {/* Which of the two photos we are on, and what is already done. */}
+      <div className="cin-steps">
+        <span className={`cin-step ${side === 'front' ? 'active' : ''} ${cin.frontImage ? 'done' : ''}`}>
+          {cin.frontImage ? '✓' : '1'} Recto
+        </span>
+        <span className="cin-step-sep">→</span>
+        <span className={`cin-step ${side === 'back' ? 'active' : ''} ${cin.backImage ? 'done' : ''}`}>
+          {cin.backImage ? '✓' : '2'} Verso
+        </span>
+      </div>
+
       <p className="fine">
         {side === 'front' ? t('cin_front_instruction') : t('cin_back_instruction')}
       </p>
+
+      {/* The back side is reached automatically after the front; make that
+          switchable by hand too, since auto-advance can surprise people. */}
+      {cin.frontImage && (
+        <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+          <button
+            className={`mode-btn ${side === 'front' ? 'active' : ''}`}
+            onClick={() => setSide('front')}
+          >
+            Recto
+          </button>
+          <button
+            className={`mode-btn ${side === 'back' ? 'active' : ''}`}
+            onClick={() => setSide('back')}
+          >
+            Verso
+          </button>
+        </div>
+      )}
 
       {/* Mode selector */}
       <div className="capture-mode-selector">
@@ -188,11 +273,15 @@ export function CinCapture({
           {scanWarning && (
             <p className="scan-warning" role="status">⚠️ {scanWarning}</p>
           )}
+          <button className="btn btn-ghost" onClick={retake} style={{ marginTop: 8 }}>
+            ↻ Reprendre cette photo
+          </button>
         </div>
       ) : captureMode === 'camera' ? (
         <div className="camera-view">
-          <video ref={videoRef} autoPlay playsInline className="camera-video" />
+          <video ref={videoRef} autoPlay playsInline muted className="camera-video" />
           <canvas ref={canvasRef} style={{ display: 'none' }} />
+          {cameraError && <p className="scan-warning" role="alert">⚠️ {cameraError}</p>}
           <button className="btn-capture" onClick={captureImage}>
             {t('capture')}
           </button>

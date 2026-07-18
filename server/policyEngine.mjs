@@ -159,7 +159,57 @@ export function nextStep(answers = {}, profile = {}) {
 // ---------------------------------------------------------------------------
 // Scoring
 // ---------------------------------------------------------------------------
-function recommend(a, profile) {
+/**
+ * Annual premium in TND for one policy under one set of answers.
+ * Extracted so every option can be priced, not just the winning one — a list
+ * of plans is useless if only one of them carries a number.
+ */
+export function premiumFor(policy, a = {}, profile = {}) {
+  const valueFactor = { lt20: 0.9, '20-50': 1.0, '50-100': 1.25, gt100: 1.55 }[a.vehicle_value] ?? 1;
+  const usageFactor = { commute: 1.0, occasional: 0.92, professional: 1.3 }[a.usage] ?? 1;
+  const recordFactor = { none: 0.85, one: 1.1, multi: 1.35 }[a.record] ?? 1;
+  const parkingFactor = { garage: 0.95, guarded: 1.0, street: 1.08 }[a.parking] ?? 1;
+  let premium = policy.base * valueFactor * usageFactor * recordFactor * parkingFactor;
+  if (profile?.age && profile.age < 25) premium *= 1.2; // young-driver loading
+  return Math.round(premium / 10) * 10;
+}
+
+/**
+ * Every policy, scored and priced, best first.
+ *
+ * The UI previously showed a single take-it-or-leave-it recommendation. Buying
+ * insurance is a choice, so the caller gets the whole ranked shelf and the
+ * customer can pick another tier — or none at all.
+ */
+export function policyOptions(answers = {}, profile = {}) {
+  const { scores, reasons } = scorePolicies(answers, profile);
+  const ranked = [...POLICIES].sort((p, q) => scores.get(q.id) - scores.get(p.id));
+  const top = scores.get(ranked[0].id);
+  const bottom = scores.get(ranked[ranked.length - 1].id);
+  const span = Math.max(1, top - bottom);
+
+  return {
+    options: ranked.map((p, i) => ({
+      id: p.id,
+      name: p.name,
+      tier: p.tier,
+      tagline: p.tagline,
+      covers: p.covers,
+      notCovered: p.notCovered,
+      premiumTND: premiumFor(p, answers, profile),
+      recommended: i === 0,
+      // How well this tier fits *these* answers, on a readable 0-100 scale.
+      fit: Math.round(((scores.get(p.id) - bottom) / span) * 100),
+    })),
+    reasons: reasons.slice(0, 4),
+    // Choosing nothing is a legitimate outcome: eKYC has value on its own.
+    declinable: true,
+    answers,
+  };
+}
+
+/** Shared scoring pass used by both recommend() and policyOptions(). */
+function scorePolicies(a, profile) {
   const scores = new Map(POLICIES.map((p) => [p.id, 0]));
   const reasons = [];
   const add = (id, pts) => scores.set(id, scores.get(id) + pts);
@@ -236,6 +286,12 @@ function recommend(a, profile) {
     add('tous-risques-optima', 15);
   }
 
+  return { scores, reasons };
+}
+
+function recommend(a, profile) {
+  const { scores, reasons } = scorePolicies(a, profile);
+
   // --- Rank ---
   const ranked = [...POLICIES].sort((p, q) => scores.get(q.id) - scores.get(p.id));
   const winner = ranked[0];
@@ -245,21 +301,11 @@ function recommend(a, profile) {
   const confidence = Math.min(96, Math.max(62, Math.round(62 + ((top - second) / Math.max(top, 1)) * 40)));
 
   // --- Premium estimate ---
-  let premium = winner.base;
-  const valueFactor = { lt20: 0.9, '20-50': 1.0, '50-100': 1.25, gt100: 1.55 }[a.vehicle_value] ?? 1;
-  const usageFactor = { commute: 1.0, occasional: 0.92, professional: 1.3 }[a.usage] ?? 1;
-  const recordFactor = { none: 0.85, one: 1.1, multi: 1.35 }[a.record] ?? 1;
-  const parkingFactor = { garage: 0.95, guarded: 1.0, street: 1.08 }[a.parking] ?? 1;
-  premium = premium * valueFactor * usageFactor * recordFactor * parkingFactor;
-
-  // Young-driver loading straight from the eKYC profile — nothing re-asked.
-  let youngDriver = false;
-  if (profile?.age && profile.age < 25) {
-    premium *= 1.2;
-    youngDriver = true;
+  const youngDriver = !!(profile?.age && profile.age < 25);
+  if (youngDriver) {
     reasons.push('Driver age came straight from your verified eKYC profile — no re-entry, but it does apply a young-driver loading.');
   }
-  premium = Math.round(premium / 10) * 10;
+  const premium = premiumFor(winner, a, profile);
 
   const whyNotRunnerUp = buildWhyNot(winner, runnerUp, a);
 

@@ -12,14 +12,31 @@ type Route =
   | { view: 'chat' } 
   | { view: 'accident'; joinCode?: string };
 
+/** Is this tab currently attached to a live accident case? */
+function hasLiveSession(): boolean {
+  try {
+    const raw = sessionStorage.getItem('cp_session');
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    return !!(s && s.code && s.pid);
+  } catch {
+    return false;
+  }
+}
+
 function parseRoute(): Route {
   const h = window.location.hash;
   const join = h.match(/^#join\/([A-Za-z0-9]{4,10})/);
   if (join) return { view: 'accident', joinCode: join[1].toUpperCase() };
   if (h.startsWith('#accident')) return { view: 'accident' };
   if (h.startsWith('#ekyc')) return { view: 'ekyc' };
-  // Default to eKYC if no hash or empty
-  if (!h || h === '#') return { view: 'ekyc' };
+  if (!h || h === '#') {
+    // Taking a photo on a phone can cost us the tab: the OS camera takes focus,
+    // the browser evicts the page, and it reloads with an empty hash. Sending a
+    // driver who is mid-case back to eKYC at that moment is the worst possible
+    // answer, so an attached session wins over the default.
+    return hasLiveSession() ? { view: 'accident' } : { view: 'ekyc' };
+  }
   return { view: 'chat' };
 }
 

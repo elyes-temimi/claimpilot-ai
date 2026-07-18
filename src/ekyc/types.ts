@@ -31,10 +31,13 @@ export interface ProfileData {
 }
 
 export interface PolicyMatch {
+  /** Catalogue id, so a later session can restore the choice. */
+  id?: string;
   name: string;
   tagline: string;
   covers: string[];
   confidence: number;
+  premiumTND?: number;
 }
 
 export interface EkycState {

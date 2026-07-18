@@ -244,7 +244,11 @@ export function EvidenceStage({
             </div>
           )
         )}
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={onFile} />
+        {/* No `capture` attribute on purpose: forcing the OS camera is the most
+            memory-hungry path and the one most likely to get the tab evicted
+            mid-flow. Without it the phone offers camera *and* gallery, so a
+            photo already taken at the scene can be reused. */}
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
       </div>
 
       {/* ----------------------- 2 · Language AI ------------------------ */}

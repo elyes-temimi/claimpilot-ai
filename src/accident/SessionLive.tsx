@@ -16,6 +16,9 @@ import type { SessionHandle } from './useSession';
 type GpsStatus = 'pending' | 'ok' | 'failed';
 type Stage = 'case' | 'constat' | 'evidence';
 
+/** Per-tab, matching how useSession stores the session itself. */
+const STAGE_KEY = 'cp_stage';
+
 export function SessionLive({
   handle,
   onExit,
@@ -31,7 +34,20 @@ export function SessionLive({
   const me = session.participants.find((p) => p.pid === handle.myPid) || null;
   const other = session.participants.find((p) => p.pid !== handle.myPid) || null;
   const locked = session.status === 'locked';
-  const [stage, setStage] = useState<Stage>('case');
+  // Persisted per tab, because taking a photo on a phone frequently costs us
+  // the page: the OS camera takes focus, the browser evicts the tab, and on
+  // return the app remounts. The session itself survives in sessionStorage, so
+  // without this the user was silently thrown back to the case summary (or all
+  // the way to eKYC) every time they added a damage photo.
+  const [stage, setStageRaw] = useState<Stage>(() => {
+    const saved = sessionStorage.getItem(STAGE_KEY) as Stage | null;
+    return saved === 'case' || saved === 'constat' || saved === 'evidence' ? saved : 'case';
+  });
+
+  const setStage = (s: Stage) => {
+    sessionStorage.setItem(STAGE_KEY, s);
+    setStageRaw(s);
+  };
 
   // ---- QR + join link ----------------------------------------------------
   const [qr, setQr] = useState<string | null>(null);
