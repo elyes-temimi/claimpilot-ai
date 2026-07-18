@@ -27,6 +27,7 @@ export interface SessionHandle {
   sendImpact: (zone: ImpactZone) => void;
   sendConfirm: () => void;
   sendEvidence: (evidence: Omit<ParticipantEvidence, 'updatedAt'>) => void;
+  sendConstat: (constat: Partial<import('./constatTypes').ParticipantConstat>) => void;
   simulateOtherDriver: () => Promise<void>;
 }
 
@@ -158,6 +159,10 @@ export function useSession(): SessionHandle {
     send({ type: 'evidence', evidence });
   }, []);
 
+  const sendConstat = useCallback((constat: Partial<import('./constatTypes').ParticipantConstat>) => {
+    send({ type: 'constat', constat });
+  }, []);
+
   const simulateOtherDriver = useCallback(async () => {
     if (!attachRef.current) return;
     await post(`/api/session/${attachRef.current.code}/simulate`, {});
@@ -176,6 +181,7 @@ export function useSession(): SessionHandle {
     sendImpact,
     sendConfirm,
     sendEvidence,
+    sendConstat,
     simulateOtherDriver,
   };
 }

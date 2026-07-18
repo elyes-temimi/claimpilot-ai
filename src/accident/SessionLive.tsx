@@ -3,6 +3,8 @@ import QRCode from 'qrcode';
 import { IS_DEMO } from '../lib/demo';
 import { EvidenceStage } from '../evidence/EvidenceStage';
 import { CarDiagram } from './CarDiagram';
+import { ConstatForm } from './ConstatForm';
+import type { ParticipantConstat } from './constatTypes';
 import {
   distanceMeters,
   IMPACT_LABELS,
@@ -12,13 +14,24 @@ import {
 import type { SessionHandle } from './useSession';
 
 type GpsStatus = 'pending' | 'ok' | 'failed';
+type Stage = 'case' | 'constat' | 'evidence';
 
-export function SessionLive({ handle, onExit }: { handle: SessionHandle; onExit: () => void }) {
+export function SessionLive({
+  handle,
+  onExit,
+}: {
+  handle: SessionHandle;
+  onExit: () => void;
+  /** Verified identity from eKYC/auth when present. A guest arriving through a
+   *  join link has none, so this is optional and currently unused here — the
+   *  constat collects identity itself. Declared so AccidentApp can pass it. */
+  userProfile?: { fullName: string; cinNumber: string; profileId?: string };
+}) {
   const session = handle.session as SessionState;
   const me = session.participants.find((p) => p.pid === handle.myPid) || null;
   const other = session.participants.find((p) => p.pid !== handle.myPid) || null;
   const locked = session.status === 'locked';
-  const [stage, setStage] = useState<'case' | 'evidence'>('case');
+  const [stage, setStage] = useState<Stage>('case');
 
   // ---- QR + join link ----------------------------------------------------
   const [qr, setQr] = useState<string | null>(null);
@@ -105,6 +118,67 @@ export function SessionLive({ handle, onExit }: { handle: SessionHandle; onExit:
   }
 
   const created = new Date(session.createdAt);
+
+  // Handler for saving constat data
+  const handleSaveConstat = (data: Partial<ParticipantConstat>) => {
+    handle.sendConstat(data);
+  };
+
+  // -------- Phase 3: Constat Form (after both confirmed, before evidence) ----
+  if (locked && stage === 'constat' && me) {
+    const canDownload = me.constat && other?.constat && 
+                       me.constat.vehicle && other.constat.vehicle;
+    
+    return (
+      <div className="acc-live">
+        <div className="stage-nav">
+          <button className="linklike" onClick={() => setStage('case')}>‹ Back to case summary</button>
+          <span className="badge badge-blue">PHASE 3 · CONSTAT AMIABLE</span>
+        </div>
+        <div className="card">
+          <h3>📋 Constat Amiable d'Accident Automobile</h3>
+          <p className="fine">
+            Remplissez les informations du constat officiel FTUSA. Ces données seront synchronisées avec l'autre conducteur.
+          </p>
+          {other && (
+            <p className="fine">
+              <strong>{other.name}</strong> {other.constat ? '✓ a rempli son constat' : 'remplit son constat...'}
+            </p>
+          )}
+        </div>
+        <ConstatForm
+          existingData={me.constat || undefined}
+          onSave={handleSaveConstat}
+          isLocked={false}
+        />
+        <div className="confirm-bar">
+          {canDownload && (
+            <button
+              className="btn btn-ghost"
+              onClick={() => {
+                if (other) {
+                  const { downloadConstatPDF } = require('./constatPDF');
+                  downloadConstatPDF({
+                    session,
+                    driverA: me,
+                    driverB: other,
+                  });
+                }
+              }}
+            >
+              ⬇ Télécharger le constat (PDF)
+            </button>
+          )}
+          <button
+            className="btn btn-danger btn-wide"
+            onClick={() => setStage('evidence')}
+          >
+            Continuer vers l'analyse des preuves →
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // -------- Phase 4: AI evidence analysis (after the case locks) ----------
   if (locked && stage === 'evidence' && me) {
@@ -213,8 +287,8 @@ export function SessionLive({ handle, onExit }: { handle: SessionHandle; onExit:
               : '—'}
             . One case file, two confirmations, zero paperwork.
           </p>
-          <button className="btn btn-danger" onClick={() => setStage('evidence')}>
-            🧠 Continue to AI evidence analysis — Phase 4
+          <button className="btn btn-danger" onClick={() => setStage('constat')}>
+            📋 Continue to Constat Form — Phase 3
           </button>
           {session.analysis && (
             <p className="fine center">Case integrity so far: {session.analysis.score}/100</p>

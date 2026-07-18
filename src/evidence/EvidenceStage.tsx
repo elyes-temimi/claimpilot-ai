@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { IS_DEMO } from '../lib/demo';
 import type { Participant, ParticipantEvidence } from '../accident/types';
 import type { SessionHandle } from '../accident/useSession';
+import { VoiceRecorder } from '../components/VoiceRecorder';
+import { transcribeAudio } from '../lib/speechToText';
 import { ConsistencyCard } from './ConsistencyCard';
 import { analyzeStatement, DEMO_STATEMENTS, LANG_LABELS, type Lang, type StatementAnalysis } from './language';
 import { drawDamagedCar, type SampleKind } from './sampleDamage';
@@ -42,6 +44,8 @@ export function EvidenceStage({
   const [statement, setStatement] = useState<StatementAnalysis | null>(null);
   const [dictating, setDictating] = useState(false);
   const [interim, setInterim] = useState('');
+  const [transcribing, setTranscribing] = useState(false);
+  const [recordingMode, setRecordingMode] = useState<'text' | 'voice'>('text');
   const dictRef = useRef<DictationHandle | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -146,6 +150,21 @@ export function EvidenceStage({
     setStatement(analyzeStatement(statementText.trim()));
   };
 
+  const handleVoiceRecording = async (audioBlob: Blob, duration: number) => {
+    setTranscribing(true);
+    try {
+      const result = await transcribeAudio(audioBlob, duration);
+      setStatementText(result.text);
+      setStatement(analyzeStatement(result.text));
+      setRecordingMode('text'); // Switch back to text mode to show result
+    } catch (error) {
+      console.error('Transcription error:', error);
+      alert('Failed to transcribe audio. Please try again.');
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
   const loadFraudScenario = () => {
     setStatementText(DEMO_STATEMENTS.fraud);
     setStatement(analyzeStatement(DEMO_STATEMENTS.fraud));
@@ -239,37 +258,72 @@ export function EvidenceStage({
           engine tags every word, then extracts the facts.
         </p>
 
-        {speechAvailable() && (
-          <div className="row wrap">
-            <button className={`chip ${dictating ? 'chip-live' : ''}`} onClick={() => toggleDictation('fr-FR')}>
-              {dictating ? '⏹ stop' : '🎙 dicter en français'}
-            </button>
-            <button className="chip" onClick={() => toggleDictation('ar-TN')}>🎙 بالعربية / بالدارجة</button>
-            <button className="chip" onClick={() => toggleDictation('en-US')}>🎙 in English</button>
-          </div>
-        )}
-
-        <textarea
-          className="stmt-input"
-          dir="auto"
-          rows={3}
-          placeholder="Ex: Kont waqef au feu rouge و دخل فيا من التالي…"
-          value={interim ? `${statementText} ${interim}`.trim() : statementText}
-          onChange={(e) => setStatementText(e.target.value)}
-        />
-        <div className="row wrap">
-          <button className="btn btn-primary" disabled={!statementText.trim()} onClick={runStatementAnalysis}>
-            🧠 Analyze statement
+        {/* Recording mode toggle */}
+        <div className="row wrap" style={{ marginBottom: '12px' }}>
+          <button 
+            className={`chip ${recordingMode === 'text' ? 'chip-active' : ''}`}
+            onClick={() => setRecordingMode('text')}
+          >
+            ⌨️ Type / Dictate
           </button>
-          {IS_DEMO && (
-            <>
-              <button className="btn btn-ghost" onClick={() => { setStatementText(DEMO_STATEMENTS.victim); setStatement(analyzeStatement(DEMO_STATEMENTS.victim)); }}>
-                ⚡ Demo: mixed-language statement
-              </button>
-              <button className="btn btn-ghost" onClick={loadFraudScenario}>⚠ Demo: fraud scenario</button>
-            </>
-          )}
+          <button 
+            className={`chip ${recordingMode === 'voice' ? 'chip-active' : ''}`}
+            onClick={() => setRecordingMode('voice')}
+          >
+            🎤 Voice Recording
+          </button>
         </div>
+
+        {recordingMode === 'voice' ? (
+          <>
+            <p className="fine" style={{ marginBottom: '12px' }}>
+              Record your full statement in any language (Arabic, Darija, French, or mixed). 
+              The AI will automatically transcribe and analyze it.
+            </p>
+            {transcribing ? (
+              <div className="widget-processing">
+                <div className="spinner" />
+                <span>Transcribing your statement with multilingual AI...</span>
+              </div>
+            ) : (
+              <VoiceRecorder onRecordingComplete={handleVoiceRecording} maxDuration={120} />
+            )}
+          </>
+        ) : (
+          <>
+            {speechAvailable() && (
+              <div className="row wrap">
+                <button className={`chip ${dictating ? 'chip-live' : ''}`} onClick={() => toggleDictation('fr-FR')}>
+                  {dictating ? '⏹ stop' : '🎙 dicter en français'}
+                </button>
+                <button className="chip" onClick={() => toggleDictation('ar-TN')}>🎙 بالعربية / بالدارجة</button>
+                <button className="chip" onClick={() => toggleDictation('en-US')}>🎙 in English</button>
+              </div>
+            )}
+
+            <textarea
+              className="stmt-input"
+              dir="auto"
+              rows={3}
+              placeholder="Ex: Kont waqef au feu rouge و دخل فيا من التالي…"
+              value={interim ? `${statementText} ${interim}`.trim() : statementText}
+              onChange={(e) => setStatementText(e.target.value)}
+            />
+            <div className="row wrap">
+              <button className="btn btn-primary" disabled={!statementText.trim()} onClick={runStatementAnalysis}>
+                🧠 Analyze statement
+              </button>
+              {IS_DEMO && (
+                <>
+                  <button className="btn btn-ghost" onClick={() => { setStatementText(DEMO_STATEMENTS.victim); setStatement(analyzeStatement(DEMO_STATEMENTS.victim)); }}>
+                    ⚡ Demo: mixed-language statement
+                  </button>
+                  <button className="btn btn-ghost" onClick={loadFraudScenario}>⚠ Demo: fraud scenario</button>
+                </>
+              )}
+            </div>
+          </>
+        )}
 
         {statement && <StatementResult analysis={statement} />}
       </div>

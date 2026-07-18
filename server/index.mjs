@@ -9,6 +9,9 @@ import { createHash, createSign, createVerify, generateKeyPairSync, randomUUID }
 import { WebSocketServer } from 'ws';
 import { screenName } from './amlData.mjs';
 import { nextStep } from './policyEngine.mjs';
+import { dbStatus, getCase, initDb, listFlaggedCases } from './db.mjs';
+import { llmStatus } from './llm.mjs';
+import { enrichEstimate, estimateRepair } from './repairEstimate.mjs';
 import {
   createSession,
   getSession,
@@ -128,19 +131,90 @@ app.post('/api/session/:code/simulate', (req, res) => {
   res.json({ ok: true });
 });
 
-// LAN address so a phone can scan the QR and reach the dev server
-app.get('/api/netinfo', (_req, res) => {
-  let lanIp = null;
-  for (const addrs of Object.values(networkInterfaces())) {
-    for (const a of addrs || []) {
-      if (a.family === 'IPv4' && !a.internal) {
-        lanIp = a.address;
-        break;
-      }
-    }
-    if (lanIp) break;
+// --- AI + data services status -------------------------------------------
+// The UI shows an honest badge per dependency rather than implying everything
+// is fine when Ollama or MySQL is down.
+app.get('/api/system/status', async (_req, res) => {
+  res.json({ llm: await llmStatus(), db: dbStatus() });
+});
+
+// --- Repair estimation ----------------------------------------------------
+app.post('/api/estimate', async (req, res) => {
+  const { photos, impact, tier, position, vehicleMake, withLlm } = req.body || {};
+  if (!Array.isArray(photos)) return res.status(400).json({ error: 'photos[] required' });
+  let estimate = estimateRepair({ photos, impact, tier, position });
+  if (withLlm !== false) estimate = await enrichEstimate(estimate, { vehicleMake, impact });
+  res.json(estimate);
+});
+
+// --- Fraud queue ----------------------------------------------------------
+app.get('/api/cases/flagged', async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+  try {
+    res.json({ cases: await listFlaggedCases(limit), db: dbStatus() });
+  } catch (err) {
+    res.status(503).json({ error: err.message, db: dbStatus() });
   }
-  res.json({ lanIp, clientPort: 5173 });
+});
+
+app.get('/api/cases/:caseId', async (req, res) => {
+  try {
+    const found = await getCase(req.params.caseId);
+    if (!found) return res.status(404).json({ error: 'not_found' });
+    res.json(found);
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
+});
+
+// Virtual adapters a phone on the WiFi can never reach. A dev box typically
+// has several, and they enumerate *before* the real NIC — so naively taking
+// the first non-internal IPv4 hands out something like 192.168.56.1
+// (VirtualBox) and the session QR silently points nowhere.
+const VIRTUAL_ADAPTER =
+  /virtualbox|vmware|vmnet|hyper-v|vethernet|wsl|docker|tap-windows|loopback|bluetooth|tailscale|zerotier|npcap/i;
+
+/** Rank a candidate address: higher = more likely reachable from a phone. */
+function scoreAddress(name, address) {
+  if (VIRTUAL_ADAPTER.test(name)) return -1;
+  // 169.254.x means DHCP failed on that adapter — never routable.
+  if (address.startsWith('169.254.')) return -1;
+
+  let score = 0;
+  if (/wi-?fi|wireless|wlan/i.test(name)) score += 40;
+  else if (/ethernet|eth\d|en\d/i.test(name)) score += 30;
+
+  if (/^192\.168\./.test(address)) score += 20;
+  else if (/^10\./.test(address)) score += 18;
+  else if (/^172\.(1[6-9]|2\d|3[01])\./.test(address)) score += 8; // often Docker/WSL
+
+  return score;
+}
+
+function pickLanIp() {
+  const candidates = [];
+  for (const [name, addrs] of Object.entries(networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a.family !== 'IPv4' || a.internal) continue;
+      candidates.push({ name, address: a.address, score: scoreAddress(name, a.address) });
+    }
+  }
+  candidates.sort((x, y) => y.score - x.score);
+  return { best: candidates.find((c) => c.score >= 0)?.address || null, candidates };
+}
+
+// LAN address so a phone can scan the QR and reach the dev server.
+// Set LAN_IP=x.x.x.x to override when the auto-pick guesses wrong.
+app.get('/api/netinfo', (_req, res) => {
+  const { best, candidates } = pickLanIp();
+  const forced = process.env.LAN_IP || null;
+  res.json({
+    lanIp: forced || best,
+    forced: !!forced,
+    clientPort: Number(process.env.CLIENT_PORT || 5173),
+    // Everything considered, so the QR card can offer a manual pick.
+    candidates: candidates.map(({ name, address, score }) => ({ name, address, usable: score >= 0 })),
+  });
 });
 
 const PORT = 8787;
@@ -160,6 +234,15 @@ wss.on('connection', (ws) => {
   ws.on('close', () => handleClose(ws, wss));
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`[claimpilot-trust] listening on http://localhost:${PORT} (ws: /ws)`);
+  // Both are non-fatal: a missing database degrades to disk spooling, a missing
+  // Ollama degrades to the deterministic rules engine.
+  await initDb();
+  const llm = await llmStatus();
+  console.log(
+    llm.available
+      ? `[llm] Ollama ready — model ${llm.model}`
+      : `[llm] Ollama unavailable (${llm.error}) — fraud analysis falls back to rules only`
+  );
 });

@@ -3,7 +3,17 @@ import { AccidentHome } from './AccidentHome';
 import { SessionLive } from './SessionLive';
 import { useSession } from './useSession';
 
-export function AccidentApp({ joinCode }: { joinCode?: string }) {
+export function AccidentApp({ 
+  joinCode,
+  userProfile
+}: { 
+  joinCode?: string;
+  userProfile?: {
+    fullName: string;
+    cinNumber: string;
+    profileId?: string;
+  };
+}) {
   const handle = useSession();
   const resumeTried = useRef(false);
   const [, forceTick] = useState(0);
@@ -62,9 +72,9 @@ export function AccidentApp({ joinCode }: { joinCode?: string }) {
 
       <div className="acc-scroll">
         {handle.session && handle.myPid ? (
-          <SessionLive handle={handle} onExit={exit} />
+          <SessionLive handle={handle} onExit={exit} userProfile={userProfile} />
         ) : (
-          <AccidentHome handle={handle} initialJoinCode={joinCode} />
+          <AccidentHome handle={handle} initialJoinCode={joinCode} userProfile={userProfile} />
         )}
       </div>
 

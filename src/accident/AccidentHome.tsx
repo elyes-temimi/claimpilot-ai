@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { loadStoredIdentity } from './identity';
 import type { SessionHandle } from './useSession';
 import type { SessionPreview } from './types';
@@ -6,19 +6,25 @@ import type { SessionPreview } from './types';
 export function AccidentHome({
   handle,
   initialJoinCode,
+  userProfile,
 }: {
   handle: SessionHandle;
   initialJoinCode?: string;
+  userProfile?: { fullName: string; cinNumber: string; profileId?: string };
 }) {
   const stored = loadStoredIdentity();
-  const [name, setName] = useState(stored.name);
+  const [name, setName] = useState(stored.name || userProfile?.fullName || '');
   const [codeInput, setCodeInput] = useState(initialJoinCode || '');
   const [preview, setPreview] = useState<SessionPreview | null>(null);
   const [joinMethod, setJoinMethod] = useState<'qr' | 'code'>('code');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const identity = () => ({ name: name.trim() || 'Guest Driver', verified: stored.verified, policy: stored.policy });
+  const identity = () => ({
+    name: name.trim() || userProfile?.fullName?.trim() || 'Conducteur 2',
+    verified: stored.verified,
+    policy: stored.policy,
+  });
 
   const lookup = async (code: string, method: 'qr' | 'code') => {
     setError(null);
@@ -42,6 +48,18 @@ export function AccidentHome({
     if (initialJoinCode) lookup(initialJoinCode, 'qr');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialJoinCode]);
+
+  // ...and then connect straight through. Someone who opened the link the other
+  // driver just sent them has already agreed to join; making them tap a second
+  // confirm at the roadside is pure friction. Typed codes still confirm, since
+  // those can be mistyped into a stranger's case.
+  const autoJoined = useRef(false);
+  useEffect(() => {
+    if (!initialJoinCode || !preview || autoJoined.current) return;
+    autoJoined.current = true;
+    confirmJoin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, initialJoinCode]);
 
   const start = async () => {
     setError(null);

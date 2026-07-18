@@ -1,0 +1,18 @@
+# ClaimPilot AI — eKYC (Streamlit) — dependency list
+#
+# Deliberately classical-CV-first (OpenCV Haar cascades) rather than
+# mediapipe/dlib/deepface: those either lack prebuilt wheels for brand-new
+# Python releases or need system build tools (cmake/Visual Studio) that are
+# a common hackathon-night blocker on a fresh Windows laptop. EasyOCR is the
+# one heavier dependency (pulls PyTorch) but it is the only pip-only option
+# that reads Arabic + French without a separately-installed system binary
+# (pytesseract would need Tesseract-OCR + the `ara` language pack on PATH).
+
+streamlit>=1.38
+opencv-python==4.10.0.84
+easyocr>=1.7
+streamlit-drawable-canvas>=0.9
+fpdf2>=2.8
+qrcode>=8.0
+numpy>=1.26
+pillow>=10.0

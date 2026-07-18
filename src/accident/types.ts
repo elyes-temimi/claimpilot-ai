@@ -87,6 +87,7 @@ export interface Participant {
   impact: ImpactZone | null;
   confirmed: boolean;
   evidence?: ParticipantEvidence | null;
+  constat?: import('./constatTypes').ParticipantConstat | null;
 }
 
 export interface SessionEvent {

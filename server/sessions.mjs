@@ -2,6 +2,9 @@
 // One live case, two drivers, everything auto-captured and broadcast in real time.
 import { randomUUID } from 'node:crypto';
 import { analyzeConsistency } from './consistency.mjs';
+import { analyzeFraud } from './fraudEngine.mjs';
+import { enrichEstimate, estimateRepair } from './repairEstimate.mjs';
+import { saveCase } from './db.mjs';
 
 // Unambiguous alphabet for session codes (no 0/O, 1/I/L)
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -80,6 +83,7 @@ function scheduleSimulatedEvidence(session) {
       );
       recomputeAnalysis(session);
       broadcast(session, null);
+      scheduleDeepAnalysis(session, null);
     }, 2600);
   }
 }
@@ -167,6 +171,10 @@ function serialize(session) {
     participants: session.participants,
     events: session.events,
     analysis: session.analysis || null,
+    fraud: session.fraud || null,
+    fraudPending: !!session.fraudPending,
+    estimates: session.estimates || null,
+    persistence: session.persistence || null,
   };
 }
 
@@ -179,6 +187,166 @@ function recomputeAnalysis(session) {
   ) {
     addEvent(session, '🧠', `Consistency engine: case integrity ${session.analysis.score}/100`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Deep analysis — LLM fraud pass + repair estimate + MySQL persistence.
+//
+// Runs off the critical path: llama3 on an 8B model takes 20-35s, far too long
+// to block a websocket message. The fast deterministic consistency score lands
+// immediately, `fraudPending` tells the UI a deeper pass is running, and the
+// full verdict replaces it when it arrives.
+// ---------------------------------------------------------------------------
+
+const DEEP_DEBOUNCE_MS = 900;
+
+function scheduleDeepAnalysis(session, wss) {
+  clearTimeout(session._deepTimer);
+  session._deepTimer = setTimeout(() => {
+    runDeepAnalysis(session, wss).catch((err) => {
+      console.warn(`[session ${session.code}] deep analysis failed:`, err.message);
+      session.fraudPending = false;
+      broadcast(session, wss);
+    });
+  }, DEEP_DEBOUNCE_MS);
+}
+
+async function runDeepAnalysis(session, wss) {
+  if (!session.participants.some((p) => p.evidence)) return;
+
+  session.fraudPending = true;
+  broadcast(session, wss);
+
+  // 1. Repair estimate per driver (deterministic, fast)
+  const estimates = {};
+  for (const p of session.participants) {
+    if (!p.evidence?.photos?.length) continue;
+    const base = estimateRepair({
+      photos: p.evidence.photos,
+      impact: p.impact,
+      tier: p.vehicleTier || 'standard',
+      position: p.position,
+    });
+    estimates[p.role] = await enrichEstimate(base, {
+      vehicleMake: p.constat?.vehicle?.make || p.vehicleMake,
+      impact: p.impact,
+    });
+  }
+  session.estimates = estimates;
+
+  // 2. Fraud pass (LLM + rules)
+  const fraud = await analyzeFraud(session);
+  session.fraud = fraud;
+  session.fraudPending = false;
+
+  if (fraud) {
+    const icon = fraud.risk === 'high' ? '🚩' : fraud.risk === 'medium' ? '⚠️' : '🧠';
+    addEvent(
+      session,
+      icon,
+      `Analyse anti-fraude (${fraud.analysedBy}): risque ${fraud.risk.toUpperCase()} — score ${fraud.score}/100`
+    );
+  }
+  broadcast(session, wss);
+
+  // 3. Persist once the case is sealed
+  if (session.status === 'locked') {
+    const result = await saveCase(buildSnapshot(session));
+    session.persistence = result;
+    addEvent(
+      session,
+      result.persisted ? '💾' : '📥',
+      result.persisted
+        ? `Dossier enregistré dans MySQL${fraud?.flagged ? ' — signalé fraud_risk = HIGH' : ''}`
+        : `MySQL indisponible — dossier mis en file d'attente (${result.reason || 'hors ligne'})`
+    );
+    broadcast(session, wss);
+  }
+}
+
+/** Flatten the live session into the shape db.saveCase expects. */
+function buildSnapshot(session) {
+  const fraud = session.fraud;
+  const estimates = session.estimates || {};
+  const anyPos = session.participants.find((p) => p.position)?.position;
+  const estimateTotal = Object.values(estimates).reduce((s, e) => s + (e?.total || 0), 0);
+
+  return {
+    caseId: session.caseId,
+    sessionCode: session.code,
+    status: session.status,
+    createdAt: session.createdAt,
+    lockedAt: session.lockedAt,
+    accidentAt: session.createdAt,
+    placeLabel: session.placeLabel || null,
+    lat: anyPos?.lat ?? null,
+    lng: anyPos?.lng ?? null,
+    injuries: session.participants.some((p) => p.evidence?.statement?.slots?.injuries === true)
+      ? true
+      : session.participants.some((p) => p.evidence?.statement?.slots?.injuries === false)
+        ? false
+        : null,
+    integrityScore: fraud?.integrityScore ?? session.analysis?.score ?? null,
+    verdict: fraud?.verdict || session.analysis?.verdict || null,
+    fraudScore: fraud?.score ?? null,
+    fraudRisk: fraud?.risk || 'low',
+    fraudFlagged: !!fraud?.flagged,
+    fraudSummary: fraud?.summary || null,
+    analysedBy: fraud?.analysedBy || null,
+    estimateTotal: Math.round(estimateTotal * 100) / 100,
+    currency: 'TND',
+    participants: session.participants.map((p) => {
+      const slots = p.evidence?.statement?.slots || {};
+      const vehicle = p.constat?.vehicle || {};
+      return {
+        role: p.role,
+        name: p.name,
+        cin: p.cin || null,
+        licenceNo: p.licenceNo || null,
+        policy: p.policy || vehicle.policyNumber || null,
+        insurer: vehicle.insuranceCompany || null,
+        plate: vehicle.plateNumber || null,
+        vehicleMake: [vehicle.make, vehicle.model].filter(Boolean).join(' ') || null,
+        verified: p.verified,
+        simulated: p.simulated,
+        impact: p.impact,
+        lat: p.position?.lat ?? null,
+        lng: p.position?.lng ?? null,
+        statementRaw: p.evidence?.statement?.raw || null,
+        statementSummary: p.evidence?.statement?.summary || null,
+        statementLangs: p.evidence?.statement
+          ? Object.entries(p.evidence.statement.shares || {})
+              .filter(([, v]) => v >= 15)
+              .map(([k]) => k.toUpperCase())
+              .join('/')
+          : null,
+        claimedDirection: slots.impactDirection || null,
+        movement: slots.movement || null,
+        faultClaim: slots.faultClaim || null,
+        confirmed: p.confirmed,
+        photos: p.evidence?.photos || [],
+        estimateLines: estimates[p.role]?.lines || [],
+        // Each driver's own constat — their sketch and their circumstances.
+        constat: p.constat
+          ? {
+              language: p.constat.language || 'fr',
+              circumstances: p.constat.circumstances || [],
+              croquis: p.constat.sketch || null,
+              observations: p.constat.observations || null,
+              signedAt: p.constat.signedAt || null,
+            }
+          : null,
+      };
+    }),
+    findings: (fraud?.findings || []).map((f) => ({
+      role: f.role,
+      code: f.code,
+      severity: f.severity,
+      title: f.title,
+      detail: f.detail,
+      origin: f.origin,
+    })),
+  };
 }
 
 export function broadcast(session, wss) {
@@ -242,6 +410,24 @@ export function handleMessage(ws, msg, wss) {
     }
     recomputeAnalysis(session);
     broadcast(session, wss);
+    scheduleDeepAnalysis(session, wss);
+    return;
+  }
+
+  // Constat data (Phase 3) is submitted after the case locks but before evidence
+  if (msg.type === 'constat') {
+    p.constat = sanitizeConstat(msg.constat, p.constat);
+    if (p.constat) {
+      const hasVehicle = p.constat.vehicle && p.constat.vehicle.plateNumber;
+      const numCirc = p.constat.circumstances ? p.constat.circumstances.length : 0;
+      const hasDamage = p.constat.damage && p.constat.damage.visibleDamage;
+      addEvent(
+        session,
+        '📋',
+        `${p.name} updated constat: ${hasVehicle ? 'vehicle ✓' : ''} ${numCirc > 0 ? `${numCirc} circumstances` : ''} ${hasDamage ? 'damage ✓' : ''}`
+      );
+    }
+    broadcast(session, wss);
     return;
   }
 
@@ -278,6 +464,8 @@ export function handleMessage(ws, msg, wss) {
   }
   refreshStatus(session);
   broadcast(session, wss);
+  // Sealing the case is what triggers persistence, so re-run the deep pass.
+  if (session.status === 'locked') scheduleDeepAnalysis(session, wss);
 }
 
 /** Shallow validation + size caps so a client can't bloat the session. */
@@ -316,6 +504,49 @@ function sanitizeEvidence(raw) {
   }
   if (photos.length === 0 && !statement) return null;
   return { photos, statement, updatedAt: now() };
+}
+
+/** Sanitize and merge constat data */
+function sanitizeConstat(raw, existing) {
+  if (!raw || typeof raw !== 'object') return existing || null;
+  
+  const result = { ...(existing || {}), pid: raw.pid || existing?.pid };
+  
+  // Vehicle details
+  if (raw.vehicle && typeof raw.vehicle === 'object') {
+    const v = raw.vehicle;
+    result.vehicle = {
+      plateNumber: String(v.plateNumber || '').slice(0, 20),
+      make: String(v.make || '').slice(0, 50),
+      model: String(v.model || '').slice(0, 50),
+      direction: String(v.direction || '').slice(0, 20),
+      insuranceCompany: String(v.insuranceCompany || '').slice(0, 100),
+      policyNumber: String(v.policyNumber || '').slice(0, 50),
+      insuredName: String(v.insuredName || '').slice(0, 100),
+    };
+  }
+  
+  // Circumstances (17 checkboxes)
+  if (Array.isArray(raw.circumstances)) {
+    const valid = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17'];
+    result.circumstances = raw.circumstances
+      .filter(c => valid.includes(String(c)))
+      .slice(0, 17)
+      .map(String);
+  }
+  
+  // Damage description
+  if (raw.damage && typeof raw.damage === 'object') {
+    const d = raw.damage;
+    result.damage = {
+      visibleDamage: String(d.visibleDamage || '').slice(0, 1000),
+      estimatedSeverity: ['minor', 'moderate', 'severe'].includes(d.estimatedSeverity) 
+        ? d.estimatedSeverity 
+        : undefined,
+    };
+  }
+  
+  return result;
 }
 
 export function handleClose(ws, wss) {
