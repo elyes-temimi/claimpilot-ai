@@ -1,5 +1,6 @@
 import Tesseract from 'tesseract.js';
 import { parseCin, type CinFields } from './cin';
+import { preprocessForOcr } from './imagePrep';
 
 export interface OcrResult {
   fullName: string;
@@ -30,17 +31,38 @@ export async function extractCinData(
       },
     });
 
-    // Perform OCR
-    const { data } = await worker.recognize(imageData);
-    const text = data.text;
-
-    console.log('OCR Text:', text);
+    // Raw phone photos of a laminated card defeat Tesseract: on a realistic
+    // capture (tilt + glare + desk background) only the digits survived and
+    // every Arabic line came back as noise. Preprocessing recovers most of it.
+    let prepped = imageData;
+    let cropped = false;
+    try {
+      const prep = await preprocessForOcr(imageData);
+      prepped = prep.dataUrl;
+      cropped = !!prep.crop;
+    } catch (e) {
+      console.warn('preprocessing skipped:', e);
+    }
 
     // Label-driven parse against the real Tunisian CIN layout (اللقب / الاسم /
     // تاريخ الولادة / مكانها on the front, اسم ولقب الأم / العنوان on the back).
-    // The old heuristic took the longest line as the name, which on this card
-    // is the "الجمهورية التونسية" header.
-    const fields = parseCin(text, side);
+    const run = async (src: string) => {
+      const { data } = await worker.recognize(src);
+      return { data, fields: parseCin(data.text, side) };
+    };
+
+    let best = await run(prepped);
+    console.log(`OCR Text (preprocessed${cropped ? ', card cropped' : ''}):`, best.data.text);
+
+    // Only pay for a second pass when the first one came up short — cropping
+    // can fail on an unusual background, and the original is then better.
+    if (best.fields.found.length < 2 && prepped !== imageData) {
+      const raw = await run(imageData);
+      console.log('OCR Text (original):', raw.data.text);
+      if (raw.fields.found.length > best.fields.found.length) best = raw;
+    }
+
+    const { data, fields } = best;
 
     // Cleanup
     await worker.terminate();
