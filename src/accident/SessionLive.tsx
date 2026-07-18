@@ -4,6 +4,7 @@ import { IS_DEMO } from '../lib/demo';
 import { EvidenceStage } from '../evidence/EvidenceStage';
 import { CarDiagram } from './CarDiagram';
 import { ConstatForm } from './ConstatForm';
+import { downloadConstatPDF } from './constatPDF';
 import type { ParticipantConstat } from './constatTypes';
 import {
   distanceMeters,
@@ -14,7 +15,7 @@ import {
 import type { SessionHandle } from './useSession';
 
 type GpsStatus = 'pending' | 'ok' | 'failed';
-type Stage = 'case' | 'constat' | 'evidence';
+type Stage = 'case' | 'constat' | 'evidence' | 'done';
 
 /** Per-tab, matching how useSession stores the session itself. */
 const STAGE_KEY = 'cp_stage';
@@ -41,7 +42,7 @@ export function SessionLive({
   // the way to eKYC) every time they added a damage photo.
   const [stage, setStageRaw] = useState<Stage>(() => {
     const saved = sessionStorage.getItem(STAGE_KEY) as Stage | null;
-    return saved === 'case' || saved === 'constat' || saved === 'evidence' ? saved : 'case';
+    return saved === 'case' || saved === 'constat' || saved === 'evidence' || saved === 'done' ? saved : 'case';
   });
 
   const setStage = (s: Stage) => {
@@ -172,14 +173,7 @@ export function SessionLive({
             <button
               className="btn btn-ghost"
               onClick={() => {
-                if (other) {
-                  const { downloadConstatPDF } = require('./constatPDF');
-                  downloadConstatPDF({
-                    session,
-                    driverA: me,
-                    driverB: other,
-                  });
-                }
+                if (other) downloadConstatPDF({ session, driverA: me, driverB: other });
               }}
             >
               ⬇ Télécharger le constat (PDF)
@@ -196,6 +190,55 @@ export function SessionLive({
     );
   }
 
+  // -------- Final step: take the constat and go home ----------------------
+  // The claim ends with a document in the driver's hand. Both drivers land
+  // here independently, each downloading their own constat, and "return home"
+  // detaches this tab from the case so the next journey starts clean.
+  if (locked && stage === 'done' && me) {
+    const goHome = () => {
+      sessionStorage.removeItem(STAGE_KEY);
+      onExit();
+    };
+    return (
+      <div className="acc-live">
+        <div className="card locked-banner">
+          <div className="ekyc-icon">✅</div>
+          <h2>Dossier terminé</h2>
+          <p className="fine">
+            Le constat de <strong>{me.name}</strong> est prêt. Chaque conducteur télécharge
+            sa propre version — les deux sont enregistrées sous le dossier <code>{session.caseId}</code>.
+          </p>
+
+          <button
+            className="btn btn-danger btn-wide"
+            onClick={() => other && downloadConstatPDF({ session, driverA: me, driverB: other })}
+            disabled={!other}
+          >
+            ⬇ Télécharger mon constat (PDF)
+          </button>
+
+          {session.fraud && (
+            <p className="fine center">
+              Analyse: risque {session.fraud.risk.toUpperCase()} · intégrité{' '}
+              {session.fraud.integrityScore}/100
+            </p>
+          )}
+          {session.persistence && (
+            <p className="fine center">
+              {session.persistence.persisted
+                ? '💾 Enregistré dans la base'
+                : "📥 En attente de synchronisation avec la base"}
+            </p>
+          )}
+
+          <button className="btn btn-ghost btn-wide" onClick={goHome}>
+            🏠 Retour à l'accueil
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // -------- Phase 4: AI evidence analysis (after the case locks) ----------
   if (locked && stage === 'evidence' && me) {
     return (
@@ -205,6 +248,14 @@ export function SessionLive({
           <span className="badge badge-blue">PHASE 4 · AI EVIDENCE ANALYSIS</span>
         </div>
         <EvidenceStage handle={handle} me={me} other={other} />
+
+        {/* Every stage must have a visible way forward — the evidence step
+            previously dead-ended with no route to the finished document. */}
+        <div className="confirm-bar">
+          <button className="btn btn-danger btn-wide" onClick={() => setStage('done')}>
+            Terminer et récupérer le constat →
+          </button>
+        </div>
       </div>
     );
   }

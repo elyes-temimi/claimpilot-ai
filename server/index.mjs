@@ -9,8 +9,9 @@ import { createHash, createSign, createVerify, generateKeyPairSync, randomUUID }
 import { WebSocketServer } from 'ws';
 import { screenName } from './amlData.mjs';
 import { nextStep, policyOptions } from './policyEngine.mjs';
-import { dbStatus, getCase, initDb, listFlaggedCases } from './db.mjs';
+import { dbStatus, getCase, getEkycProfile, initDb, listFlaggedCases, saveEkycProfile } from './db.mjs';
 import { llmStatus } from './llm.mjs';
+import { transcribeCin, visionStatus } from './visionCin.mjs';
 import { enrichEstimate, estimateRepair } from './repairEstimate.mjs';
 import {
   createSession,
@@ -24,7 +25,9 @@ import {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+// Base64 CIN photos and damage images run well past the old 2mb cap; a
+// request that exceeds it fails as a bare 413 with no useful message.
+app.use(express.json({ limit: '25mb' }));
 
 // Ephemeral signing identity for the "ClaimPilot Trust Service".
 // In production this would live in an HSM; for the hackathon it is
@@ -143,7 +146,7 @@ app.post('/api/session/:code/simulate', (req, res) => {
 // The UI shows an honest badge per dependency rather than implying everything
 // is fine when Ollama or MySQL is down.
 app.get('/api/system/status', async (_req, res) => {
-  res.json({ llm: await llmStatus(), db: dbStatus() });
+  res.json({ llm: await llmStatus(), vision: await visionStatus(), db: dbStatus() });
 });
 
 // --- Repair estimation ----------------------------------------------------
@@ -153,6 +156,65 @@ app.post('/api/estimate', async (req, res) => {
   let estimate = estimateRepair({ photos, impact, tier, position });
   if (withLlm !== false) estimate = await enrichEstimate(estimate, { vehicleMake, impact });
   res.json(estimate);
+});
+
+// --- CIN transcription by the local vision model --------------------------
+// Returns raw lines, not fields: the model reads glyphs well but assigns
+// labels badly, so the deterministic parser on the client does that half.
+app.post('/api/cin/read', async (req, res) => {
+  const { image } = req.body || {};
+  if (!image) return res.status(400).json({ error: 'image required' });
+  try {
+    res.json({ ok: true, ...(await transcribeCin(image)) });
+  } catch (err) {
+    // Never fatal — the client still has Tesseract.
+    res.json({ ok: false, error: err.message, lines: [], text: '' });
+  }
+});
+
+// --- eKYC reuse -----------------------------------------------------------
+// Verifying an identity is expensive and annoying; doing it twice for the same
+// person is pure friction. Once an account has a completed eKYC on file, the
+// app reads it back and skips straight to the claim.
+app.post('/api/ekyc/profile', async (req, res) => {
+  const p = req.body || {};
+  if (!p.accountKey) return res.status(400).json({ error: 'accountKey required' });
+  try {
+    res.json(await saveEkycProfile(p));
+  } catch (err) {
+    res.status(503).json({ persisted: false, error: err.message });
+  }
+});
+
+app.get('/api/ekyc/profile', async (req, res) => {
+  const key = String(req.query.accountKey || '');
+  if (!key) return res.status(400).json({ error: 'accountKey required' });
+  try {
+    const row = await getEkycProfile(key);
+    if (!row) return res.json({ found: false });
+    res.json({
+      found: true,
+      profile: {
+        fullName: row.full_name,
+        cin: row.cin,
+        dob: row.dob,
+        address: row.address,
+        phone: row.phone,
+        verified: !!row.identity_verified,
+        livenessPassed: !!row.liveness_passed,
+        screeningStatus: row.screening_status,
+        policyId: row.policy_id,
+        policyName: row.policy_name,
+        premiumTND: row.premium_tnd == null ? null : Number(row.premium_tnd),
+        profileId: row.profile_id,
+        completedAt: row.completed_at,
+      },
+    });
+  } catch (err) {
+    // A dead database must not block someone from filing a claim — they just
+    // get asked to verify again.
+    res.json({ found: false, degraded: true, error: err.message });
+  }
 });
 
 // --- Fraud queue ----------------------------------------------------------

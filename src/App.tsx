@@ -40,11 +40,24 @@ function parseRoute(): Route {
   return { view: 'chat' };
 }
 
+interface SavedKyc {
+  fullName: string | null;
+  cin: string | null;
+  dob: string | null;
+  address: string | null;
+  verified: boolean;
+  policyName: string | null;
+  profileId: string | null;
+  completedAt: string | null;
+}
+
 function AppContent() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const [route, setRoute] = useState<Route>(parseRoute);
   const [ekycData, setEkycData] = useState<EkycState | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [savedKyc, setSavedKyc] = useState<SavedKyc | null>(null);
+  const [kycChecked, setKycChecked] = useState(false);
 
   useEffect(() => {
     const onHash = () => setRoute(parseRoute());
@@ -52,14 +65,67 @@ function AppContent() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Has this account already been verified? Identity belongs to the person,
+  // not the session, so a returning user should never redo their CIN.
+  useEffect(() => {
+    if (!user?.email) {
+      setKycChecked(true);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/ekyc/profile?accountKey=${encodeURIComponent(user.email)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled && d.found) setSavedKyc(d.profile);
+      })
+      // A database outage must never lock someone out of filing a claim —
+      // they simply get asked to verify again.
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setKycChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.email]);
+
   const handleEkycComplete = (data: EkycState) => {
     setEkycData(data);
+
+    // Persist it so this is the last time they do this.
+    if (user?.email) {
+      fetch('/api/ekyc/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountKey: user.email,
+          fullName: data.cin.fullName,
+          cin: data.cin.cinNumber,
+          dob: data.cin.dob,
+          address: data.cin.address,
+          verified: true,
+          livenessPassed: !!data.liveness?.passed,
+          screeningStatus: data.screening?.status || null,
+          policyId: data.policy?.id || null,
+          policyName: data.policy?.name || null,
+          premiumTND: data.policy?.premiumTND ?? null,
+          profileId: data.profileId,
+          completedAt: new Date().toISOString(),
+        }),
+      }).catch(() => {});
+    }
+
     // After eKYC complete, navigate to accident claims
     window.location.hash = '#accident';
   };
 
+  // Already verified? Don't make them do it again — jump straight to the claim.
+  useEffect(() => {
+    if (savedKyc && route.view === 'ekyc') window.location.hash = '#accident';
+  }, [savedKyc, route.view]);
+
   // Show loading spinner while checking auth
-  if (isLoading) {
+  if (isLoading || (isAuthenticated && !kycChecked)) {
     return (
       <div className="page">
         <div className="widget-processing" style={{ justifyContent: 'center', height: '100vh' }}>
@@ -135,6 +201,11 @@ function AppContent() {
                 fullName: ekycData.cin.fullName,
                 cinNumber: ekycData.cin.cinNumber,
                 profileId: ekycData.profileId || undefined
+              } : savedKyc ? {
+                // Verified in an earlier session — read back from the database.
+                fullName: savedKyc.fullName || user?.fullName || '',
+                cinNumber: savedKyc.cin || '',
+                profileId: savedKyc.profileId || undefined
               } : user ? {
                 fullName: user.fullName,
                 cinNumber: user.cinNumber || '',

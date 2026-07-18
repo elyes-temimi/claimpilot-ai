@@ -96,6 +96,36 @@ export interface SessionEvent {
   text: string;
 }
 
+/** Fraud verdict computed server-side (rules + local LLM). */
+export interface FraudFinding {
+  role: 'A' | 'B' | null;
+  code: string;
+  severity: 'low' | 'medium' | 'high';
+  title: string;
+  detail: string;
+  origin: 'rules' | 'llm';
+  /** False when only the LLM saw it — shown as "to verify", not as fact. */
+  confirmed: boolean;
+}
+
+export interface FraudReport {
+  score: number;
+  risk: 'low' | 'medium' | 'high';
+  flagged: boolean;
+  summary: string;
+  findings: FraudFinding[];
+  integrityScore: number;
+  verdict: 'fast-track' | 'standard' | 'adjuster';
+  analysedBy: string;
+  computedAt: string;
+}
+
+export interface PersistenceState {
+  persisted: boolean;
+  spooled?: boolean;
+  reason?: string;
+}
+
 export interface SessionState {
   code: string;
   caseId: string;
@@ -105,6 +135,10 @@ export interface SessionState {
   participants: Participant[];
   events: SessionEvent[];
   analysis?: ConsistencyReport | null;
+  fraud?: FraudReport | null;
+  fraudPending?: boolean;
+  estimates?: Record<string, unknown> | null;
+  persistence?: PersistenceState | null;
 }
 
 export interface MyIdentity {

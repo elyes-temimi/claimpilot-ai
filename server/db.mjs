@@ -132,6 +132,29 @@ const SCHEMA = [
     CONSTRAINT fk_fraud_case FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  // A completed eKYC, keyed by the account that performed it. Once this row
+  // exists the user never photographs their CIN again — identity verification
+  // is a property of the person, not of a session.
+  `CREATE TABLE IF NOT EXISTS ekyc_profiles (
+    id                INT AUTO_INCREMENT PRIMARY KEY,
+    account_key       VARCHAR(190) NOT NULL UNIQUE,
+    full_name         VARCHAR(160) NULL,
+    cin               VARCHAR(16) NULL,
+    dob               VARCHAR(16) NULL,
+    address           VARCHAR(255) NULL,
+    phone             VARCHAR(32) NULL,
+    identity_verified TINYINT(1) NOT NULL DEFAULT 0,
+    liveness_passed   TINYINT(1) NOT NULL DEFAULT 0,
+    screening_status  VARCHAR(24) NULL,
+    policy_id         VARCHAR(48) NULL,
+    policy_name       VARCHAR(80) NULL,
+    premium_tnd       DECIMAL(10,2) NULL,
+    profile_id        VARCHAR(48) NULL,
+    completed_at      DATETIME NULL,
+    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_cin (cin)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   `CREATE TABLE IF NOT EXISTS constats (
     id             INT AUTO_INCREMENT PRIMARY KEY,
     case_id        VARCHAR(32) NOT NULL,
@@ -444,6 +467,49 @@ export async function getCase(caseId) {
   const [findings] = await pool.query('SELECT * FROM fraud_findings WHERE case_id = ?', [caseId]);
   const [constats] = await pool.query('SELECT * FROM constats WHERE case_id = ?', [caseId]);
   return { ...row, participants, photos, estimates, findings, constats };
+}
+
+
+// ---------------------------------------------------------------------------
+// eKYC profiles — so a returning user is not asked to verify twice
+// ---------------------------------------------------------------------------
+
+/** Upsert the eKYC result for an account. `accountKey` is the login email. */
+export async function saveEkycProfile(p) {
+  if (!ready) await initDb({ quiet: true });
+  if (!ready) return { persisted: false, reason: lastError };
+  await pool.query(
+    `INSERT INTO ekyc_profiles
+       (account_key, full_name, cin, dob, address, phone, identity_verified,
+        liveness_passed, screening_status, policy_id, policy_name, premium_tnd,
+        profile_id, completed_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE
+       full_name=VALUES(full_name), cin=VALUES(cin), dob=VALUES(dob),
+       address=VALUES(address), phone=VALUES(phone),
+       identity_verified=VALUES(identity_verified),
+       liveness_passed=VALUES(liveness_passed),
+       screening_status=VALUES(screening_status),
+       policy_id=VALUES(policy_id), policy_name=VALUES(policy_name),
+       premium_tnd=VALUES(premium_tnd), profile_id=VALUES(profile_id),
+       completed_at=VALUES(completed_at)`,
+    [
+      String(p.accountKey).slice(0, 190),
+      p.fullName || null, p.cin || null, p.dob || null, p.address || null,
+      p.phone || null, p.verified ? 1 : 0, p.livenessPassed ? 1 : 0,
+      p.screeningStatus || null, p.policyId || null, p.policyName || null,
+      num(p.premiumTND), p.profileId || null, asDate(p.completedAt || new Date().toISOString()),
+    ]
+  );
+  return { persisted: true };
+}
+
+/** The stored eKYC for an account, or null. Drives "skip verification". */
+export async function getEkycProfile(accountKey) {
+  if (!ready) await initDb({ quiet: true });
+  if (!ready || !accountKey) return null;
+  const [[row]] = await pool.query('SELECT * FROM ekyc_profiles WHERE account_key = ?', [accountKey]);
+  return row || null;
 }
 
 await loadSpool();

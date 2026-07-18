@@ -164,7 +164,63 @@ const cleanValue = (s: string) =>
  * try the text after the label, then before it, then the following line.
  * `lines` and `folded` are index- and offset-aligned by construction.
  */
-function valueFor(lines: string[], folded: string[], label: RegExp): string {
+/**
+ * The issuance line, e.g. "تونس في 01 جوان 2019" — a place, then "في", then a
+ * date. It carries no labelled field, so it must never be offered as the value
+ * of a neighbouring label. Left in, it makes the address on the back absorb the
+ * issue date and shifts the mother's name into the address.
+ */
+const isIssuanceLine = (folded: string) => /\sفي\s/.test(folded) && !!extractDate(folded);
+
+/** Usable as a value: not a label, not boilerplate, not the issuance line. */
+function isValueLine(folded: string | undefined): boolean {
+  return (
+    !!folded &&
+    folded.trim().length >= 2 &&
+    !ANY_LABEL.test(folded) &&
+    !isBoilerplate(folded) &&
+    !isIssuanceLine(folded)
+  );
+}
+
+/**
+ * Which side of a label its value sits on, when they are on separate lines.
+ *
+ * Tesseract reads the card in logical order and emits `label` then `value`.
+ * A vision model transcribing the same card emits the value FIRST, because on
+ * an RTL card the value is physically to the left of its label and it scans
+ * visually:
+ *
+ *   Tesseract            vision model
+ *   اللقب                التميمي     <- value
+ *   التميمي              اللقب       <- label
+ *
+ * Guessing wrong shifts every field by one — the mother's name lands in the
+ * address, the surname in the given name. So we decide per document: count how
+ * many labels are preceded by a value line versus followed by one, and let the
+ * majority win. Ties go to "after", the conventional reading order.
+ */
+function detectValueSide(folded: string[]): 'before' | 'after' {
+  let before = 0;
+  let after = 0;
+  for (let i = 0; i < folded.length; i++) {
+    if (!ANY_LABEL.test(folded[i])) continue;
+    // Only counts when the label is alone on its line; an inline "label value"
+    // pair tells us nothing about the separate-line layout.
+    const inline = folded[i].replace(ANY_LABEL, '').replace(/[\s:：.\-–—]/g, '');
+    if (inline.length >= 2) continue;
+    if (isValueLine(folded[i - 1])) before++;
+    if (isValueLine(folded[i + 1])) after++;
+  }
+  return before > after ? 'before' : 'after';
+}
+
+function valueFor(
+  lines: string[],
+  folded: string[],
+  label: RegExp,
+  side: 'before' | 'after' = 'after'
+): string {
   for (let i = 0; i < folded.length; i++) {
     const m = folded[i].match(label);
     if (!m) continue;
@@ -174,15 +230,17 @@ function valueFor(lines: string[], folded: string[], label: RegExp): string {
     const after = cleanValue(lines[i].slice(at + m[0].length).replace(/^[\s:：.\-–—]+/, ''));
     if (after.length >= 2 && !ANY_LABEL.test(foldLetters(after))) return after;
 
-    // 2. before the label (OCR emitted visual order)
+    // 2. before the label, same line (OCR emitted visual order)
     const before = cleanValue(lines[i].slice(0, at));
     if (before.length >= 2 && !ANY_LABEL.test(foldLetters(before))) return before;
 
-    // 3. the next line, provided it is not another label or boilerplate
-    const next = folded[i + 1];
-    if (next && !ANY_LABEL.test(next) && !isBoilerplate(next)) {
-      const v = cleanValue(lines[i + 1]);
-      if (v.length >= 2) return v;
+    // 3. the adjacent line, on whichever side this document puts its values
+    const order = side === 'before' ? [i - 1, i + 1] : [i + 1, i - 1];
+    for (const j of order) {
+      if (isValueLine(folded[j])) {
+        const v = cleanValue(lines[j]);
+        if (v.length >= 2) return v;
+      }
     }
   }
   return '';
@@ -282,13 +340,17 @@ export function parseCin(rawText: string, side?: CinSide): CinFields {
 
   const resolvedSide = side && side !== 'unknown' ? side : detectSide(rawText);
 
+  // Decide once whether this transcription puts values before or after their
+  // labels; getting it wrong shifts every field by one.
+  const valueSide = detectValueSide(folded);
+
   const cin = extractCin(folded, flat);
-  const lastNameAr = valueFor(lines, folded, LABELS.lastName);
-  const firstNameAr = valueFor(lines, folded, LABELS.firstName);
+  const lastNameAr = valueFor(lines, folded, LABELS.lastName, valueSide);
+  const firstNameAr = valueFor(lines, folded, LABELS.firstName, valueSide);
   const dob = dateFor(lines, folded, LABELS.dob);
-  const placeOfBirth = valueFor(lines, folded, LABELS.placeOfBirth);
-  const motherName = valueFor(lines, folded, LABELS.motherName);
-  const address = valueFor(lines, folded, LABELS.address);
+  const placeOfBirth = valueFor(lines, folded, LABELS.placeOfBirth, valueSide);
+  const motherName = valueFor(lines, folded, LABELS.motherName, valueSide);
+  const address = valueFor(lines, folded, LABELS.address, valueSide);
 
   // "تونس في 01 جوان 2019" — issuing office, then the date, on the back.
   let issuedAt = '';

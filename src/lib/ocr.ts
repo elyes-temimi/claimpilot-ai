@@ -51,7 +51,7 @@ export async function extractCinData(
       return { data, fields: parseCin(data.text, side) };
     };
 
-    let best = await run(prepped);
+    let best: { data: { confidence: number; text: string }; fields: CinFields } = await run(prepped);
     console.log(`OCR Text (preprocessed${cropped ? ', card cropped' : ''}):`, best.data.text);
 
     // Only pay for a second pass when the first one came up short — cropping
@@ -60,6 +60,30 @@ export async function extractCinData(
       const raw = await run(imageData);
       console.log('OCR Text (original):', raw.data.text);
       if (raw.fields.found.length > best.fields.found.length) best = raw;
+    }
+
+    // The local vision model reads this card far better than Tesseract on a
+    // real photo, but it transcribes in visual order and occasionally misses a
+    // line, so we take whichever pass recovered more fields rather than
+    // trusting either blindly.
+    try {
+      const vres = await fetch('/api/cin/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: prepped }),
+      }).then((r) => r.json());
+
+      if (vres?.ok && vres.text) {
+        console.log(`OCR Text (vision ${vres.model}, ${vres.ms}ms):`, vres.text);
+        const vfields = parseCin(vres.text, side);
+        if (vfields.found.length > best.fields.found.length) {
+          best = { data: { ...best.data, confidence: Math.max(best.data.confidence, 85) }, fields: vfields };
+        }
+      } else if (vres?.error) {
+        console.warn('vision CIN read unavailable:', vres.error);
+      }
+    } catch (e) {
+      console.warn('vision CIN read failed, using Tesseract only:', e);
     }
 
     const { data, fields } = best;
