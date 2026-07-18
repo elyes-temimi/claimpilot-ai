@@ -184,6 +184,64 @@ function isValueLine(folded: string | undefined): boolean {
 }
 
 /**
+ * Rebuild "label value" lines from a column-wise transcription.
+ *
+ * On the real card the labels are stacked in a right-hand column with their
+ * values to the left. OCR frequently reads that as two blocks rather than
+ * interleaved rows:
+ *
+ *   اللقب              <- label block
+ *   الاسم
+ *   تاريخ الولادة
+ *   مكانها
+ *   النديمي            <- value block, same order
+ *   محمد
+ *   20/05/2005
+ *   تونس
+ *
+ * Adjacency-based lookup cannot pair those: the line after `اللقب` is another
+ * label, so only the LAST label in the block ever finds a value. That is
+ * exactly why a real card yielded the surname but never the given name or the
+ * place of birth. We detect a run of two or more lone labels followed by that
+ * many value lines and zip them back together; the normal inline path then
+ * handles everything.
+ */
+function unstackColumns(lines: string[], folded: string[]): { lines: string[]; folded: string[] } {
+  const isLoneLabel = (f: string) =>
+    ANY_LABEL.test(f) && f.replace(ANY_LABEL, '').replace(/[\s:：.\-–—]/g, '').length < 2;
+
+  for (let i = 0; i < folded.length; i++) {
+    if (!isLoneLabel(folded[i])) continue;
+
+    let end = i;
+    while (end + 1 < folded.length && isLoneLabel(folded[end + 1])) end++;
+    const count = end - i + 1;
+    if (count < 2) continue;
+
+    const values: number[] = [];
+    for (let j = end + 1; j < folded.length && values.length < count; j++) {
+      if (isLoneLabel(folded[j])) break;
+      if (isValueLine(folded[j])) values.push(j);
+    }
+    // Only rewrite when the block pairs cleanly; a partial match is more
+    // likely to be a coincidence than a column.
+    if (values.length < count) continue;
+
+    const outLines = [...lines];
+    const outFolded = [...folded];
+    for (let k = 0; k < count; k++) {
+      outLines[i + k] = `${lines[i + k]} ${lines[values[k]]}`;
+      outFolded[i + k] = `${folded[i + k]} ${folded[values[k]]}`;
+      outLines[values[k]] = '';
+      outFolded[values[k]] = '';
+    }
+    const keep = outFolded.map((f, idx) => (f === '' ? -1 : idx)).filter((x) => x >= 0);
+    return { lines: keep.map((i2) => outLines[i2]), folded: keep.map((i2) => outFolded[i2]) };
+  }
+  return { lines, folded };
+}
+
+/**
  * Which side of a label its value sits on, when they are on separate lines.
  *
  * Tesseract reads the card in logical order and emits `label` then `value`.
@@ -331,11 +389,13 @@ const score = (found: string[]) =>
  */
 export function parseCin(rawText: string, side?: CinSide): CinFields {
   const text = normalizeDigits(rawText);
-  const lines = text
+  let lines = text
     .split('\n')
     .map((l) => stripDiacritics(l).trim())
     .filter(Boolean);
-  const folded = lines.map(foldLetters);
+  let folded = lines.map(foldLetters);
+  // Repair a column-wise transcription before anything else reads it.
+  ({ lines, folded } = unstackColumns(lines, folded));
   const flat = text.replace(/\n/g, ' ');
 
   const resolvedSide = side && side !== 'unknown' ? side : detectSide(rawText);
