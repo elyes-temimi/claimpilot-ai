@@ -13,9 +13,22 @@ const tnd = (n: number) =>
  * provenance rather than as a single confident figure, because it is derived
  * from photo analysis against indicative market prices, not from a quote.
  */
-export function EstimateCard({ estimate }: { estimate: RepairEstimate }) {
+export function EstimateCard({
+  estimate,
+  pending = false,
+  hasPhotos = true,
+}: {
+  estimate: RepairEstimate | null | undefined;
+  /** Deep analysis still running — an 8B model takes 20-35s. */
+  pending?: boolean;
+  /** Whether this driver has submitted any damage photo yet. */
+  hasPhotos?: boolean;
+}) {
   const [open, setOpen] = useState(false);
 
+  // Absence must explain itself. Rendering nothing when there is no estimate
+  // is why this section looked missing rather than empty: the user has no way
+  // to tell "not computed yet" from "feature not there".
   if (!estimate || estimate.lines.length === 0) {
     return (
       <div className="card estimate-card">
@@ -23,7 +36,11 @@ export function EstimateCard({ estimate }: { estimate: RepairEstimate }) {
           <span className="card-title">🔧 Estimation de réparation</span>
         </div>
         <p className="fine">
-          Aucun dégât chiffrable détecté sur les photos analysées.
+          {pending
+            ? '⏳ Calcul en cours…'
+            : !hasPhotos
+              ? "Ajoutez une photo des dégâts ci-dessus : l'estimation du coût de réparation apparaîtra ici automatiquement."
+              : 'Aucun dégât chiffrable détecté sur les photos analysées.'}
         </p>
       </div>
     );

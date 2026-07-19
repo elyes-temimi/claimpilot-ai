@@ -241,7 +241,11 @@ export function SessionLive({
 
         </div>
 
-        {session.estimates?.[me.role] && <EstimateCard estimate={session.estimates[me.role]} />}
+        <EstimateCard
+          estimate={session.estimates?.[me.role]}
+          pending={!!session.fraudPending}
+          hasPhotos={!!me.evidence?.photos?.length}
+        />
 
         <div className="card">
           <button className="btn btn-ghost btn-wide" onClick={goHome}>
@@ -261,6 +265,14 @@ export function SessionLive({
           <span className="badge badge-blue">PHASE 4 · AI EVIDENCE ANALYSIS</span>
         </div>
         <EvidenceStage handle={handle} me={me} other={other} />
+
+        {/* The estimate updates as photos are added, so it belongs here beside
+            them — not only behind a button at the very end. */}
+        <EstimateCard
+          estimate={session.estimates?.[me.role]}
+          pending={!!session.fraudPending}
+          hasPhotos={!!me.evidence?.photos?.length}
+        />
 
         {/* Every stage must have a visible way forward — the evidence step
             previously dead-ended with no route to the finished document. */}
