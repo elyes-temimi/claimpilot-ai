@@ -1,7 +1,7 @@
-# ML Models Specification for ClaimPilot AI
+# ML Models Specification for ASSURINI AI
 
 ## Overview
-This document specifies the 3 ML models needed to complete the ClaimPilot AI fraud detection system.
+This document specifies the 3 ML models needed to complete the ASSURINI AI fraud detection system.
 
 ---
 
@@ -456,7 +456,7 @@ import numpy as np
 from PIL import Image
 import io
 
-app = FastAPI(title="ClaimPilot ML Services")
+app = FastAPI(title="ASSURINI ML Services")
 
 # Enable CORS for React frontend
 app.add_middleware(

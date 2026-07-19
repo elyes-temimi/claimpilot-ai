@@ -1,9 +1,9 @@
 {
-  "name": "claimpilot-ai",
+  "name": "assurini-ai",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "ClaimPilot AI — Intelligent eKYC + Smart Policy Selection (hackathon prototype)",
+  "description": "ASSURINI AI — Intelligent eKYC + Smart Policy Selection (hackathon prototype)",
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
     "dev:https": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"vite --mode https\"",

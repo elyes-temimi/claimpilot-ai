@@ -54,7 +54,7 @@ export function ChatApp() {
         <div className="brand">
           <div className="logo">🛡️</div>
           <div className="brand-text">
-            <h1>ClaimPilot AI</h1>
+            <h1>ASSURINI AI</h1>
             <p>{phaseLabel}</p>
           </div>
           <a className="sos-btn" href="#accident" title="Shared accident session (Phase 3)">

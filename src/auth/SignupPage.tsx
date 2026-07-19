@@ -37,7 +37,7 @@ export function SignupPage({ onSwitchToLogin }: { onSwitchToLogin: () => void })
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-icon">🛡️</div>
-        <h1>ClaimPilot AI</h1>
+        <h1>ASSURINI AI</h1>
         <h2>{t('signup')}</h2>
         <p className="auth-subtitle">Commencez votre vérification eKYC</p>
 

@@ -1,4 +1,4 @@
-# ClaimPilot AI - Guide de Démarrage Rapide 🚀
+# ASSURINI AI - Guide de Démarrage Rapide 🚀
 
 ## 🎯 Démarrage en 30 secondes
 

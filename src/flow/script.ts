@@ -19,7 +19,7 @@ export async function runFlow(c: FlowController) {
 
   // ============================ PHASE 1 — eKYC ============================
   c.step('identity');
-  await c.say("Hi, I'm ClaimPilot 🛡️ Getting insured usually takes 20–30 minutes of forms and queues. We'll do it right here, in a few minutes of chat.");
+  await c.say("Hi, I'm ASSURINI 🛡️ Getting insured usually takes 20–30 minutes of forms and queues. We'll do it right here, in a few minutes of chat.");
   await c.say('First: your identity. Show me your ID document — photo, upload, or the built-in specimen card if you just want to see the magic.');
 
   const idRes = await c.ask<{ image: string; specimen: boolean }>({ type: 'idCapture' });
@@ -202,6 +202,6 @@ export async function runFlow(c: FlowController) {
     window.location.hash = '#accident';
   } else {
     c.user(cta.label);
-    await c.say('Thanks for flying ClaimPilot ✈️ The 🚨 button up top opens the shared accident session any time.');
+    await c.say('Thanks for flying ASSURINI ✈️ The 🚨 button up top opens the shared accident session any time.');
   }
 }

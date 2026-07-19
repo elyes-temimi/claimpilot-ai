@@ -1,8 +1,8 @@
-# ClaimPilot AI - Résumé Exécutif 📊
+# ASSURINI AI - Résumé Exécutif 📊
 
 ## 🎯 Vue d'Ensemble
 
-**ClaimPilot AI** est une plateforme moderne d'automatisation d'assurance qui combine :
+**ASSURINI AI** est une plateforme moderne d'automatisation d'assurance qui combine :
 - ✅ **Vérification d'identité digitale (eKYC)**
 - ✅ **Recommandation de police intelligente**
 - ✅ **Déclaration d'accident collaborative**
@@ -400,7 +400,7 @@ Week 4: Intégration
 
 ## 🎉 Conclusion
 
-**ClaimPilot AI** est un MVP **fonctionnel et démontrable** qui résout de vrais problèmes :
+**ASSURINI AI** est un MVP **fonctionnel et démontrable** qui résout de vrais problèmes :
 - ✅ eKYC trop long → Réduit de 30 min à 5 min
 - ✅ Constat papier → Digital, sync, officiel
 - ✅ Fraude déclarative → Détection automatique

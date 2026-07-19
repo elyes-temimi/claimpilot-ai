@@ -1,4 +1,4 @@
-// ClaimPilot AI — mocked trust services backend.
+// ASSURINI AI — mocked trust services backend.
 // Provides: AML/PEP screening, ECDSA profile signing + verification,
 // and the adaptive policy recommendation engine.
 import express from 'express';
@@ -29,7 +29,7 @@ app.use(cors());
 // request that exceeds it fails as a bare 413 with no useful message.
 app.use(express.json({ limit: '25mb' }));
 
-// Ephemeral signing identity for the "ClaimPilot Trust Service".
+// Ephemeral signing identity for the "ASSURINI Trust Service".
 // In production this would live in an HSM; for the hackathon it is
 // generated fresh at boot, which is enough to demo real signatures.
 const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -41,7 +41,7 @@ const registry = new Map();
 const canonical = (obj) => JSON.stringify(obj, Object.keys(obj).sort());
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'claimpilot-trust', time: new Date().toISOString() });
+  res.json({ ok: true, service: 'assurini-trust', time: new Date().toISOString() });
 });
 
 // --- AML / PEP screening -------------------------------------------------
@@ -305,7 +305,7 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, async () => {
-  console.log(`[claimpilot-trust] listening on http://localhost:${PORT} (ws: /ws)`);
+  console.log(`[assurini-trust] listening on http://localhost:${PORT} (ws: /ws)`);
   // Both are non-fatal: a missing database degrades to disk spooling, a missing
   // Ollama degrades to the deterministic rules engine.
   await initDb();

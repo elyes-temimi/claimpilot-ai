@@ -161,7 +161,7 @@ function AppContent() {
         {route.view === 'ekyc' && (
           <div className="ekyc-header">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <h1>🛡️ ClaimPilot AI</h1>
+              <h1>🛡️ ASSURINI AI</h1>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <LanguageSelector />
                 <div className="user-menu">

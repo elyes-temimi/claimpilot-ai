@@ -4,7 +4,7 @@ import { IS_DEMO } from '../lib/demo';
 import { EvidenceStage } from '../evidence/EvidenceStage';
 import { CarDiagram } from './CarDiagram';
 import { ConstatForm } from './ConstatForm';
-import { downloadConstatPDF } from './constatPDF';
+import { downloadConstatPdf } from './constatPdfFill';
 import type { ParticipantConstat } from './constatTypes';
 import {
   distanceMeters,
@@ -44,6 +44,10 @@ export function SessionLive({
     const saved = sessionStorage.getItem(STAGE_KEY) as Stage | null;
     return saved === 'case' || saved === 'constat' || saved === 'evidence' || saved === 'done' ? saved : 'case';
   });
+
+  // A failed PDF must say why — the old .txt stub could not fail, so nothing
+  // in the UI was prepared to report a real generation error.
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const setStage = (s: Stage) => {
     sessionStorage.setItem(STAGE_KEY, s);
@@ -173,7 +177,7 @@ export function SessionLive({
             <button
               className="btn btn-ghost"
               onClick={() => {
-                if (other) downloadConstatPDF({ session, driverA: me, driverB: other });
+                downloadConstatPdf({ session, me, other }).catch((e) => setPdfError(String(e.message || e)));
               }}
             >
               ⬇ Télécharger le constat (PDF)
@@ -211,11 +215,11 @@ export function SessionLive({
 
           <button
             className="btn btn-danger btn-wide"
-            onClick={() => other && downloadConstatPDF({ session, driverA: me, driverB: other })}
-            disabled={!other}
+            onClick={() => downloadConstatPdf({ session, me, other }).catch((e) => setPdfError(String(e.message || e)))}
           >
             ⬇ Télécharger mon constat (PDF)
           </button>
+          {pdfError && <p className="scan-warning" role="alert">⚠️ {pdfError}</p>}
 
           {session.fraud && (
             <p className="fine center">

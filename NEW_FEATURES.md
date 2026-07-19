@@ -1,4 +1,4 @@
-# Nouvelles Fonctionnalités - ClaimPilot AI ✨
+# Nouvelles Fonctionnalités - ASSURINI AI ✨
 
 ## 🎉 Mises à jour majeures
 

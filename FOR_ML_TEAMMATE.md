@@ -6,7 +6,7 @@ Salut ! Ce document explique ce qui a été fait et ce que tu dois construire.
 
 ## 🎯 Ton Rôle
 
-Tu dois créer **3 modèles ML** pour l'application ClaimPilot AI :
+Tu dois créer **3 modèles ML** pour l'application ASSURINI AI :
 
 1. **Détection de fraude** (analyse cohérence déclarations vs preuves)
 2. **Reconnaissance des dégâts** (identifier les parties endommagées sur photos)

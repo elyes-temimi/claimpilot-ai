@@ -1,4 +1,4 @@
-# Changelog - ClaimPilot AI
+# Changelog - ASSURINI AI
 
 All notable changes to this project are documented in this file.
 
@@ -284,5 +284,5 @@ All notable changes to this project are documented in this file.
 
 ---
 
-**Maintained by:** ClaimPilot AI Team  
+**Maintained by:** ASSURINI AI Team  
 **License:** MIT
