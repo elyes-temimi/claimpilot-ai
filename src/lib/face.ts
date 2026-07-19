@@ -67,13 +67,47 @@ export interface LivenessSession {
   stop: () => void;
 }
 
+export type HeadPose = 'left' | 'center' | 'right';
+
+export interface LivenessFrame {
+  facePresent: boolean;
+  /** Eye aspect ratio, for a live "eyes open/closed" readout. */
+  ear: number;
+  pose: HeadPose;
+  /** 0 = fully turned one way, 1 = the other; 0.5 is centred. */
+  yaw: number;
+}
+
 /**
- * Watch a <video> element and report blinks.
- * Calls onUpdate each frame with face presence, and onBlink when a blink completes.
+ * Estimate head yaw from the 68-point landmarks.
+ *
+ * Where the nose tip sits between the two jaw extremes is a robust proxy for
+ * yaw and needs no 3D model: facing the camera it is centred, turning the head
+ * slides it towards the jaw edge you turn away from. Normalising by jaw width
+ * makes it independent of distance from the camera.
+ */
+function yawOf(landmarks: faceapi.FaceLandmarks68): number {
+  const jaw = landmarks.getJawOutline();
+  const nose = landmarks.getNose();
+  const left = jaw[0];
+  const right = jaw[jaw.length - 1];
+  const tip = nose[nose.length - 1] ?? nose[0];
+  const width = right.x - left.x;
+  if (!width) return 0.5;
+  return Math.max(0, Math.min(1, (tip.x - left.x) / width));
+}
+
+/**
+ * Watch a <video> and report liveness signals every frame.
+ *
+ * `onBlink` fires on each completed close→open transition; the caller counts
+ * them. Hysteresis (close below 0.21, open above 0.28) stops a single slow
+ * blink registering as several, which is what makes a "blink twice" check
+ * pass on one blink.
  */
 export function watchLiveness(
   video: HTMLVideoElement,
-  onUpdate: (facePresent: boolean) => void,
+  onFrame: (f: LivenessFrame) => void,
   onBlink: () => void
 ): LivenessSession {
   let stopped = false;
@@ -85,20 +119,24 @@ export function watchLiveness(
       const det = await faceapi.detectSingleFace(video, detectorOptions()).withFaceLandmarks();
       if (det) {
         const ear = (earOfEye(det.landmarks.getLeftEye()) + earOfEye(det.landmarks.getRightEye())) / 2;
-        if (!eyesClosed && ear < 0.24) {
+        if (!eyesClosed && ear < 0.21) {
           eyesClosed = true;
-        } else if (eyesClosed && ear > 0.3) {
+        } else if (eyesClosed && ear > 0.28) {
           eyesClosed = false;
           onBlink();
         }
-        onUpdate(true);
+        const yaw = yawOf(det.landmarks);
+        // Generous deadband: a natural "look left" only moves this so far, and
+        // demanding a big angle makes the check feel broken.
+        const pose: HeadPose = yaw < 0.4 ? 'left' : yaw > 0.6 ? 'right' : 'center';
+        onFrame({ facePresent: true, ear, pose, yaw });
       } else {
-        onUpdate(false);
+        onFrame({ facePresent: false, ear: 0, pose: 'center', yaw: 0.5 });
       }
     } catch {
-      onUpdate(false);
+      onFrame({ facePresent: false, ear: 0, pose: 'center', yaw: 0.5 });
     }
-    if (!stopped) setTimeout(tick, 160);
+    if (!stopped) setTimeout(tick, 120);
   };
   tick();
 

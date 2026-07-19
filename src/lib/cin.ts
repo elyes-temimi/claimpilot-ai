@@ -449,13 +449,21 @@ export function parseCin(rawText: string, side?: CinSide): CinFields {
   // labels; getting it wrong shifts every field by one.
   const valueSide = detectValueSide(folded);
 
+  // Each face carries different fields, and mixing them is how the mother's
+  // name ended up in the holder's name. The holder's identity is printed ONLY
+  // on the front; the mother's name and address ONLY on the back. Restricting
+  // extraction by face makes that whole class of confusion impossible rather
+  // than relying on label patterns to stay disambiguated.
+  const isFront = resolvedSide !== 'back';
+  const isBack = resolvedSide !== 'front';
+
   const cin = extractCin(folded, flat);
-  const lastNameAr = valueFor(lines, folded, LABELS.lastName, valueSide);
-  const firstNameAr = valueFor(lines, folded, LABELS.firstName, valueSide);
-  const dob = dateFor(lines, folded, LABELS.dob);
-  const placeOfBirth = valueFor(lines, folded, LABELS.placeOfBirth, valueSide);
-  const motherName = valueFor(lines, folded, LABELS.motherName, valueSide);
-  const address = valueFor(lines, folded, LABELS.address, valueSide);
+  const lastNameAr = isFront ? valueFor(lines, folded, LABELS.lastName, valueSide) : '';
+  const firstNameAr = isFront ? valueFor(lines, folded, LABELS.firstName, valueSide) : '';
+  const dob = isFront ? dateFor(lines, folded, LABELS.dob) : '';
+  const placeOfBirth = isFront ? valueFor(lines, folded, LABELS.placeOfBirth, valueSide) : '';
+  const motherName = isBack ? valueFor(lines, folded, LABELS.motherName, valueSide) : '';
+  const address = isBack ? valueFor(lines, folded, LABELS.address, valueSide) : '';
 
   // "تونس في 01 جوان 2019" — issuing office, then the date, on the back.
   let issuedAt = '';

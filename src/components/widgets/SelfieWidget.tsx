@@ -94,7 +94,7 @@ export function SelfieWidget({ flow }: { flow: FlowController }) {
     let count = 0;
     const session = watchLiveness(
       videoRef.current,
-      (present) => setFacePresent(present),
+      (f) => setFacePresent(f.facePresent),
       () => {
         count++;
         setBlinks(count);
