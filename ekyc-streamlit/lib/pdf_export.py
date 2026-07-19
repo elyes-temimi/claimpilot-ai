@@ -82,7 +82,7 @@ def generate_kyc_pdf(
     pdf.set_xy(12, 6)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 8, "ClaimPilot AI - eKYC Verification Summary", ln=1)
+    pdf.cell(0, 8, "ASSURINI AI - eKYC Verification Summary", ln=1)
     pdf.set_x(12)
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(0, 6, f"Profile {profile.profile_id}  -  signed {profile.signed_at}", ln=1)

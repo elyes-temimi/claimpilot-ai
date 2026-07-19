@@ -1,4 +1,4 @@
-"""ClaimPilot AI — Intelligent eKYC (Streamlit)
+"""ASSURINI AI — Intelligent eKYC (Streamlit)
 
 A self-contained companion app to the React claims platform: onboarding,
 CIN OCR (Arabic + French), liveness + face match, political/terrorism
@@ -20,7 +20,7 @@ from streamlit_drawable_canvas import st_canvas
 
 from lib import face_match, handoff, liveness, ocr, pdf_export, underwriting, watchlist
 
-st.set_page_config(page_title="ClaimPilot AI — eKYC", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="ASSURINI AI — eKYC", page_icon="🛡️", layout="centered")
 
 STEPS = ["Welcome", "Document", "Confirm", "Liveness", "Screening", "Profile", "Policy", "Sign", "Done"]
 
@@ -77,7 +77,7 @@ def render_stepper():
 
 def header():
     st.markdown(
-        "<h1 style='margin-bottom:0'>🛡️ ClaimPilot AI</h1>"
+        "<h1 style='margin-bottom:0'>🛡️ ASSURINI AI</h1>"
         "<p style='color:#64748b;margin-top:0'>Intelligent eKYC — onboarding in minutes, not forms</p>",
         unsafe_allow_html=True,
     )

@@ -1,4 +1,4 @@
-# ClaimPilot AI — eKYC (Streamlit) — dependency list
+# ASSURINI AI — eKYC (Streamlit) — dependency list
 #
 # Deliberately classical-CV-first (OpenCV Haar cascades) rather than
 # mediapipe/dlib/deepface: those either lack prebuilt wheels for brand-new
