@@ -1,4 +1,4 @@
-# ClaimPilot AI
+# ASSURINI AI
 
 End-to-end motor accident claims for the Tunisian market: CIN-based eKYC, a shared
 live *constat amiable* between two drivers, AI analysis of damage photos and the
