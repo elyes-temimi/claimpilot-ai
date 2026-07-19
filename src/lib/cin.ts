@@ -83,7 +83,9 @@ function foldLetters(input: string): string {
 const LABELS = {
   // front
   lastName: /(?:اللقب|النسب)/,
-  firstName: /الاسم(?!\s*ولقب)/, // "الاسم", but not the "اسم ولقب الأم" of the back
+  // Boundary-anchored: bare "اسم" is a substring of everyday words such as
+  // "الياسمين", and matching inside one silently destroys that field.
+  firstName: /(?<![؀-ۿ])(?:ال)?اسم(?![؀-ۿ])(?!\s*ولقب)/,
   dob: /(?:تاريخ\s*الولاده|تاريخ\s*الميلاد|ولد\s*في)/,
   // `مكانها` is the label actually printed; the others are defensive
   placeOfBirth: /(?:مكانها|مكان\s*الولاده|مكان\s*الميلاد)/,
@@ -179,7 +181,10 @@ function isValueLine(folded: string | undefined): boolean {
     folded.trim().length >= 2 &&
     !ANY_LABEL.test(folded) &&
     !isBoilerplate(folded) &&
-    !isIssuanceLine(folded)
+    !isIssuanceLine(folded) &&
+    // A lone 8-digit run is the CIN; extractCin owns it. Left in the value
+    // pool it shifts every label/value pairing by one position.
+    !/^\s*\d{8}\s*$/.test(folded)
   );
 }
 
@@ -225,7 +230,7 @@ function unstackColumns(lines: string[], folded: string[]): { lines: string[]; f
     }
     // Only rewrite when the block pairs cleanly; a partial match is more
     // likely to be a coincidence than a column.
-    if (values.length < count) continue;
+    if (values.length < count) { i = end; continue; }
 
     const outLines = [...lines];
     const outFolded = [...folded];
@@ -238,6 +243,37 @@ function unstackColumns(lines: string[], folded: string[]): { lines: string[]; f
     const keep = outFolded.map((f, idx) => (f === '' ? -1 : idx)).filter((x) => x >= 0);
     return { lines: keep.map((i2) => outLines[i2]), folded: keep.map((i2) => outFolded[i2]) };
   }
+  // Mirror case: a block of values FOLLOWED by its block of labels. Vision
+  // models scan the left-hand value column of an RTL card before the labels,
+  // so this is the shape they actually emit.
+  for (let i = 0; i < folded.length; i++) {
+    if (!isLoneLabel(folded[i])) continue;
+    let end = i;
+    while (end + 1 < folded.length && isLoneLabel(folded[end + 1])) end++;
+    const count = end - i + 1;
+    if (count < 2) continue;
+
+    const values: number[] = [];
+    for (let j = i - 1; j >= 0 && values.length < count; j--) {
+      if (isLoneLabel(folded[j])) break;
+      if (isValueLine(folded[j])) values.unshift(j);
+      else break;
+    }
+    if (values.length < 2) { i = end; continue; }
+
+    const pairs = Math.min(count, values.length);
+    const outLines = [...lines];
+    const outFolded = [...folded];
+    for (let k = 0; k < pairs; k++) {
+      outLines[i + k] = `${lines[i + k]} ${lines[values[k]]}`;
+      outFolded[i + k] = `${folded[i + k]} ${folded[values[k]]}`;
+      outLines[values[k]] = '';
+      outFolded[values[k]] = '';
+    }
+    const keep = outFolded.map((f, idx) => (f === '' ? -1 : idx)).filter((x) => x >= 0);
+    return { lines: keep.map((i2) => outLines[i2]), folded: keep.map((i2) => outFolded[i2]) };
+  }
+
   return { lines, folded };
 }
 
