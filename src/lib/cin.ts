@@ -85,12 +85,12 @@ const LABELS = {
   lastName: /(?:اللقب|النسب)/,
   // Boundary-anchored: bare "اسم" is a substring of everyday words such as
   // "الياسمين", and matching inside one silently destroys that field.
-  firstName: /(?<![؀-ۿ])(?:ال)?اسم(?![؀-ۿ])(?!\s*ولقب)/,
+  firstName: /(?<![؀-ۿ])(?:ال)?اسم(?![؀-ۿ])(?!\s*و\s*لقب)/,
   dob: /(?:تاريخ\s*الولاده|تاريخ\s*الميلاد|ولد\s*في)/,
   // `مكانها` is the label actually printed; the others are defensive
   placeOfBirth: /(?:مكانها|مكان\s*الولاده|مكان\s*الميلاد)/,
   // back
-  motherName: /(?:اسم\s*ولقب\s*الام|اسم\s*الام|والده)/,
+  motherName: /(?:اسم\s*و\s*لقب\s*الام|اسم\s*الام|و\s*الده)/,
   address: /(?:العنوان|عنوان)/,
   cinNumber: /(?:بطاقه\s*التعريف|رقم\s*البطاقه|المعرف\s*الوحيد|ر\.?ب\.?ت)/,
 };
@@ -151,6 +151,14 @@ function extractDate(line: string): string {
 // Value extraction
 // ---------------------------------------------------------------------------
 
+/**
+ * Words that only ever appear in a LABEL on this card. If they survive into an
+ * extracted value, the label/value split went wrong and the value is garbage —
+ * better to return nothing than to print "و لقب الأم نرجس زايد" as someone's
+ * name on a legal document.
+ */
+const LABEL_RESIDUE = /(?:لقب|العنوان|تاريخ\s*الولاد|مكانها|بطاق[ةه]\s*التعريف)/;
+
 const cleanValue = (s: string) =>
   s
     .replace(/[^\p{L}\p{N}\s'’-]/gu, ' ')
@@ -181,6 +189,7 @@ function isValueLine(folded: string | undefined): boolean {
     folded.trim().length >= 2 &&
     !ANY_LABEL.test(folded) &&
     !isBoilerplate(folded) &&
+    !LABEL_RESIDUE.test(folded) &&
     !isIssuanceLine(folded) &&
     // A lone 8-digit run is the CIN; extractCin owns it. Left in the value
     // pool it shifts every label/value pairing by one position.
@@ -322,11 +331,11 @@ function valueFor(
 
     // 1. after the label, same line
     const after = cleanValue(lines[i].slice(at + m[0].length).replace(/^[\s:：.\-–—]+/, ''));
-    if (after.length >= 2 && !ANY_LABEL.test(foldLetters(after))) return after;
+    if (after.length >= 2 && !ANY_LABEL.test(foldLetters(after)) && !LABEL_RESIDUE.test(foldLetters(after))) return after;
 
     // 2. before the label, same line (OCR emitted visual order)
     const before = cleanValue(lines[i].slice(0, at));
-    if (before.length >= 2 && !ANY_LABEL.test(foldLetters(before))) return before;
+    if (before.length >= 2 && !ANY_LABEL.test(foldLetters(before)) && !LABEL_RESIDUE.test(foldLetters(before))) return before;
 
     // 3. the adjacent line, on whichever side this document puts its values
     const order = side === 'before' ? [i - 1, i + 1] : [i + 1, i - 1];
