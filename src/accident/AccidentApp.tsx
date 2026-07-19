@@ -12,6 +12,9 @@ export function AccidentApp({
     fullName: string;
     cinNumber: string;
     profileId?: string;
+    dob?: string;
+    address?: string;
+    planName?: string;
   };
 }) {
   const handle = useSession();

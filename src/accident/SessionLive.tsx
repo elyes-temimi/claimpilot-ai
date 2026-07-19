@@ -24,13 +24,21 @@ const STAGE_KEY = 'cp_stage';
 export function SessionLive({
   handle,
   onExit,
+  userProfile,
 }: {
   handle: SessionHandle;
   onExit: () => void;
-  /** Verified identity from eKYC/auth when present. A guest arriving through a
-   *  join link has none, so this is optional and currently unused here — the
-   *  constat collects identity itself. Declared so AccidentApp can pass it. */
-  userProfile?: { fullName: string; cinNumber: string; profileId?: string };
+  /** Verified identity from eKYC. Prefills the constat so a driver who has
+   *  already proved who they are does not retype it at the roadside. A guest
+   *  arriving via a join link has none, and the form collects it instead. */
+  userProfile?: {
+    fullName: string;
+    cinNumber: string;
+    profileId?: string;
+    dob?: string;
+    address?: string;
+    planName?: string;
+  };
 }) {
   const session = handle.session as SessionState;
   const me = session.participants.find((p) => p.pid === handle.myPid) || null;
@@ -49,6 +57,17 @@ export function SessionLive({
   // A failed PDF must say why — the old .txt stub could not fail, so nothing
   // in the UI was prepared to report a real generation error.
   const [pdfError, setPdfError] = useState<string | null>(null);
+
+  // eKYC values reused by the constat; undefined for a guest.
+  const kycIdentity = userProfile
+    ? {
+        fullName: userProfile.fullName,
+        cin: userProfile.cinNumber,
+        dob: userProfile.dob,
+        address: userProfile.address,
+        planName: userProfile.planName,
+      }
+    : undefined;
 
   const setStage = (s: Stage) => {
     sessionStorage.setItem(STAGE_KEY, s);
@@ -178,7 +197,7 @@ export function SessionLive({
             <button
               className="btn btn-ghost"
               onClick={() => {
-                downloadConstatPdf({ session, me, other }).catch((e) => setPdfError(String(e.message || e)));
+                downloadConstatPdf({ session, me, other, identity: kycIdentity }).catch((e) => setPdfError(String(e.message || e)));
               }}
             >
               ⬇ Télécharger le constat (PDF)
@@ -216,7 +235,7 @@ export function SessionLive({
 
           <button
             className="btn btn-danger btn-wide"
-            onClick={() => downloadConstatPdf({ session, me, other }).catch((e) => setPdfError(String(e.message || e)))}
+            onClick={() => downloadConstatPdf({ session, me, other, identity: kycIdentity }).catch((e) => setPdfError(String(e.message || e)))}
           >
             ⬇ Télécharger mon constat (PDF)
           </button>

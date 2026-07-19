@@ -129,7 +129,11 @@ const mark = (ctx: Ctx, x: number, y: number, size = 9) =>
 // ---------------------------------------------------------------------------
 
 interface DriverView {
-  insurer?: string; policy?: string; agency?: string;
+  /** Printed under "Véhicule assuré par" — the plan, per the business spec. */
+  plan?: string;
+  policy?: string;
+  /** Printed under "Agence" — the insurance company. */
+  agency?: string;
   validFrom?: string; validTo?: string;
   lastName?: string; firstName?: string; address?: string;
   licence?: string; licenceDate?: string; phone?: string;
@@ -138,23 +142,33 @@ interface DriverView {
   damage?: string; observations?: string;
 }
 
-/** Read a participant's own constat into the shape the printed form expects. */
-function toView(p: Participant): DriverView {
+/**
+ * Read a participant's own constat into the shape the printed form expects.
+ *
+ * `identity` is the verified eKYC profile, used wherever the constat form was
+ * left blank: a driver who already proved who they are should not retype their
+ * name, address or licence at the roadside.
+ */
+function toView(p: Participant, identity?: ConstatIdentity): DriverView {
   const c = (p as unknown as { constat?: Record<string, any> }).constat || {};
   const v = c.vehicle || {};
-  const parts = String(p.name || '').trim().split(/\s+/);
+  const source = String(c.fullName || identity?.fullName || p.name || '').trim();
+  const parts = source.split(/\s+/);
   return {
-    insurer: v.insuranceCompany,
+    // "Véhicule assuré par" carries the plan name; the company goes in
+    // "Agence". Note this inverts the usual reading of the FTUSA form, where
+    // "assuré par" is the insurer — it follows the spec given for this app.
+    plan: c.planName || p.policy || v.planName,
     policy: v.policyNumber,
-    agency: v.agency,
+    agency: v.insuranceCompany || v.agency,
     validFrom: v.validFrom,
     validTo: v.validTo,
     lastName: c.lastName || (parts.length > 1 ? parts.slice(1).join(' ') : parts[0]),
     firstName: c.firstName || (parts.length > 1 ? parts[0] : ''),
-    address: c.address || v.insuredAddress,
-    licence: c.licenceNumber,
-    licenceDate: c.licenceDate,
-    phone: c.phone,
+    address: c.address || v.insuredAddress || identity?.address,
+    licence: c.licenceNumber || identity?.licenceNumber,
+    licenceDate: c.licenceDate || identity?.licenceDate,
+    phone: c.phone || identity?.phone,
     make: [v.make, v.model].filter(Boolean).join(' '),
     plate: v.plateNumber,
     from: v.direction || c.comingFrom,
@@ -166,7 +180,7 @@ function toView(p: Participant): DriverView {
 }
 
 async function fillColumn(ctx: Ctx, d: DriverView, col: typeof COL_A) {
-  await put(ctx, col.x, ROW.insurer, d.insurer);
+  await put(ctx, col.x, ROW.insurer, d.plan);
   await put(ctx, col.x, ROW.policy, d.policy);
   await put(ctx, col.x, ROW.agency, d.agency);
   await put(ctx, col.dateFrom, ROW.attest, d.validFrom, 8, 60);
@@ -198,6 +212,19 @@ async function fillColumn(ctx: Ctx, d: DriverView, col: typeof COL_A) {
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Verified identity from eKYC, used to prefill the driver/insured blocks. */
+export interface ConstatIdentity {
+  fullName?: string;
+  cin?: string;
+  dob?: string;
+  address?: string;
+  phone?: string;
+  licenceNumber?: string;
+  licenceDate?: string;
+  /** The plan the customer subscribed to, or undefined if they declined. */
+  planName?: string;
+}
+
 export interface ConstatFillData {
   session: SessionState;
   me: Participant;
@@ -205,6 +232,8 @@ export interface ConstatFillData {
   /** Data-URL of the accident sketch, drawn into box 13. */
   croquisDataUrl?: string | null;
   place?: string;
+  /** eKYC profile of the driver downloading this copy. */
+  identity?: ConstatIdentity;
 }
 
 /**
@@ -220,7 +249,8 @@ export async function buildConstatPdf(data: ConstatFillData): Promise<Blob> {
   const ctx: Ctx = { page: doc.getPage(0), doc, font };
 
   const { session, me, other } = data;
-  const A = toView(me);
+  const A = toView(me, data.identity);
+  if (!A.plan && data.identity?.planName) A.plan = data.identity.planName;
   const B = other ? toView(other) : null;
 
   // 1 date / heure · 2 lieu

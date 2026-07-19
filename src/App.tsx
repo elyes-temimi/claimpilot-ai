@@ -200,12 +200,20 @@ function AppContent() {
               userProfile={ekycData ? {
                 fullName: ekycData.cin.fullName,
                 cinNumber: ekycData.cin.cinNumber,
-                profileId: ekycData.profileId || undefined
+                profileId: ekycData.profileId || undefined,
+                // Carried so the constat can prefill sections 7 and 8 rather
+                // than asking a verified driver to retype it at the roadside.
+                dob: ekycData.cin.dob,
+                address: ekycData.cin.address,
+                planName: ekycData.policy?.name,
               } : savedKyc ? {
                 // Verified in an earlier session — read back from the database.
                 fullName: savedKyc.fullName || user?.fullName || '',
                 cinNumber: savedKyc.cin || '',
-                profileId: savedKyc.profileId || undefined
+                profileId: savedKyc.profileId || undefined,
+                dob: savedKyc.dob || undefined,
+                address: savedKyc.address || undefined,
+                planName: savedKyc.policyName || undefined,
               } : user ? {
                 fullName: user.fullName,
                 cinNumber: user.cinNumber || '',
