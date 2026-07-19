@@ -73,6 +73,22 @@ export const LABOUR_RATES = {
  */
 export const SHOPS = [
   {
+    // A dedicated spare-parts retailer, so it goes first: searching it for
+    // "pare-chocs avant" returns actual parts, where a general classifieds
+    // site returns whole cars and unrelated listings.
+    //
+    // Its search is a Google Custom Search Engine (cx=420b638b39a3d439f) and
+    // the query lives in the URL FRAGMENT, not the query string — the CSE
+    // script reads `#gsc.q=` client-side. Putting the term in `?q=` instead
+    // silently loads an empty search page.
+    id: 'piecesautos',
+    name: 'PiecesAutos.tn',
+    kind: 'parts',
+    note: 'Vente de pièces de rechange automobile — Tunisie',
+    search: (q) =>
+      `https://www.piecesautos.tn/recherche_google?#gsc.tab=0&gsc.q=${encodeURIComponent(q)}&gsc.sort=`,
+  },
+  {
     id: 'tayara',
     name: 'Tayara',
     kind: 'marketplace',
@@ -102,9 +118,14 @@ export const SHOPS = [
   },
 ];
 
-/** Build 3 shop links for one part. */
+/**
+ * Where to buy one part: the specialist retailer, the marketplaces, and a
+ * local map search. Kept in preference order — the `slice` below is what
+ * decides how many reach the UI, so adding a source at the end of SHOPS
+ * without raising it would silently drop it.
+ */
 export function shopLinksFor(partLabel, city) {
-  return SHOPS.slice(0, 3).map((s) => ({
+  return SHOPS.slice(0, 4).map((s) => ({
     id: s.id,
     name: s.name,
     kind: s.kind,
