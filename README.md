@@ -20,10 +20,11 @@ machine.
 5. [Using the app](#using-the-app)
 6. [Demo script](#demo-script)
 7. [Architecture](#architecture)
-8. [API reference](#api-reference)
-9. [Database](#database)
-10. [Troubleshooting](#troubleshooting)
-11. [Project status and known limits](#project-status-and-known-limits)
+8. [How the AI works](#how-the-ai-works)
+9. [API reference](#api-reference)
+10. [Database](#database)
+11. [Troubleshooting](#troubleshooting)
+12. [Project status and known limits](#project-status-and-known-limits)
 
 ---
 
@@ -57,7 +58,8 @@ Start-Process 'C:\Users\elyes\tools\mysql-9.1.0-winx64\bin\mysqld.exe' `
 |---|---|---|---|
 | Node.js | ≥ 20 (tested on 24.18) | Vite client + Express server | **yes** |
 | MySQL | 8+ (tested on 9.1) | case persistence | no — degrades gracefully |
-| Ollama | with `llama3.1` or `llama3` | fraud analysis | no — falls back to rules |
+| Ollama + `llama3.1` | 8B | fraud reasoning over the statement | no — falls back to rules |
+| Ollama + `qwen2.5vl:3b` | 3B vision | reading the CIN | no — falls back to Tesseract |
 
 ### Node.js
 
@@ -92,9 +94,13 @@ DB_NAME      (claimpilot)
 ### Ollama
 
 ```bash
-ollama pull llama3.1     # recommended — best JSON adherence of the three
-ollama pull llama3       # alternative
+ollama pull llama3.1        # fraud reasoning — best JSON adherence of the three
+ollama pull qwen2.5vl:3b    # CIN reading (~3 GB)
 ```
+
+`VISION_MODEL` selects the vision model (default `qwen2.5vl:3b`). `qwen2.5vl:7b`
+reads noticeably better but is 3–5× slower — measured 9/13 fields vs 6/13, at
+34–54 s per side instead of 7–18 s, so it is not the default.
 
 Model selection is automatic, in order: `llama3.1` → `llama3` → `llama3.2`.
 Override with `OLLAMA_MODEL=llama3`, host with `OLLAMA_HOST`
@@ -199,10 +205,14 @@ screen and switches the whole interface, including RTL layout for Arabic.
 | Step | What happens |
 |---|---|
 | CIN capture (front/back) | photograph or upload the national ID card |
-| OCR | fields are read in-browser with Tesseract.js |
-| Profile form | pre-filled from OCR, fully editable |
-| Liveness | blink detection via face-api, on-device |
+| Preprocess | crop to card, denoise, flatten illumination, sharpen |
+| Read | Tesseract (`ara+fra`) **and** the local vision model; best result wins |
+| Profile form | pre-filled, fully editable — partial reads never block you |
+| Liveness | **blink ×2** or **head turn left→right**, detected live on-device |
+| Policy | five plans priced for your answers, or decline |
 | Signature | draw with finger or mouse |
+
+Once completed, the eKYC is stored against your account and **never asked again**.
 
 All biometrics are **on-device**: models are served from `public/models` and no ID
 image is uploaded anywhere.
@@ -270,6 +280,14 @@ A ~5 minute run:
 8. **The fraud scenario**: claim *"he hit me from behind"* while the photos show a
    caved-in **front** end → the integrity score collapses and the case reroutes to a
    human adjuster. This is the most persuasive moment in the demo.
+9. **The repair estimate** appears under the photos as they are analysed — total in TND
+   with an uncertainty band, per-part breakdown, and four places to buy each part.
+10. **Finish** → each driver downloads their **own** filled FTUSA constat as a real PDF,
+    then returns home. Two drivers, two constats: each carries its author's sketch and
+    impact point, which is exactly why they can differ.
+
+To reach a rejection path, enter **`Faycal Trabelsi`** as the full name at the
+confirmation step — a fictional PEP entry that routes to compliance review.
 
 Useful options:
 
@@ -285,29 +303,137 @@ Useful options:
 ## Architecture
 
 ```
-client (Vite + React + TypeScript)          server (Express + ws)
-├─ auth/            local account           ├─ index.mjs        HTTP routes + WebSocket
-├─ i18n/            AR / FR / EN            ├─ sessions.mjs     live shared session
-├─ ekyc/            CIN, liveness, profile  ├─ consistency.mjs  story vs evidence checks
-├─ accident/                                ├─ policyEngine.mjs adaptive Q&A
-│   ├─ SessionLive     live case            └─ amlData.mjs      watchlist (fictional)
-│   ├─ CarDiagram      impact point
-│   ├─ ConstatForm     FTUSA constat
-│   └─ constatPDF      downloadable export
+client (Vite + React + TypeScript)        server (Express + ws + Ollama + MySQL)
+├─ auth/           local account          ├─ index.mjs         HTTP routes + WebSocket
+├─ i18n/           AR / FR / EN           ├─ sessions.mjs      live case + deep-analysis pipeline
+├─ ekyc/                                  ├─ llm.mjs           Ollama client (JSON mode, timeouts)
+│   ├─ CinCapture      front/back photo   ├─ visionCin.mjs     CIN transcription (vision model)
+│   ├─ LivenessCheck   blink / head turn  ├─ fraudEngine.mjs   rules + LLM, bounded
+│   └─ ProfileForm     editable fields    ├─ consistency.mjs   deterministic cross-checks
+├─ accident/                              ├─ repairEstimate.mjs parts → TND
+│   ├─ SessionLive     live case          ├─ marketData.mjs    catalogue + shop links
+│   ├─ CarDiagram      impact point       ├─ policyEngine.mjs  scoring + premiums
+│   ├─ ConstatForm     FTUSA fields       ├─ db.mjs            MySQL + disk spool
+│   ├─ constatPdfFill  fills the real PDF └─ amlData.mjs       watchlist (fictional)
+│   └─ EstimateCard    cost + shop links
 ├─ evidence/
-│   ├─ vision.ts       damage heatmap
-│   └─ language.ts     code-switch detection
-├─ components/      widgets, VoiceRecorder
-└─ lib/             ocr, face, uuid, api
+│   ├─ vision.ts       damage localisation
+│   └─ language.ts     code-switch + slots
+└─ lib/
+    ├─ cin.ts          Tunisian CIN parser
+    ├─ imagePrep.ts    OCR preprocessing
+    ├─ ocr.ts          Tesseract + vision merge
+    ├─ face.ts         EAR blink + head yaw
+    └─ validation.ts   upload contrôle de saisie
+```
+
+### Claim pipeline
+
+```mermaid
+flowchart TD
+    A[Account] --> B{eKYC on file?}
+    B -- yes --> E[Shared session]
+    B -- no --> C[CIN capture]
+    C --> D[Liveness + AML + policy]
+    D --> E
+    E --> F[Constat form<br/>2 drivers, live]
+    F --> G[Evidence:<br/>photos + statement]
+    G --> H[Deep analysis]
+    H --> I[Fraud verdict]
+    H --> J[Repair estimate]
+    I --> K[FTUSA PDF]
+    J --> K
+    K --> L[(MySQL)]
+    K --> M[Home]
 ```
 
 **Design decisions worth knowing**
 
-- **Everything local.** Biometrics in the browser, LLM on Ollama, database on the box.
-- **Graceful degradation.** MySQL down → disk spool. Ollama down → rules engine. The app
-  never dies on a missing dependency.
+- **Everything local.** Biometrics in the browser, both LLMs on Ollama, database on the box.
+- **Graceful degradation.** MySQL down → disk spool. Ollama down → rules engine. Vision
+  model down → Tesseract. Camera down → file upload. The app never dies on a missing
+  dependency, and never claims an analysis that did not run.
 - **AI assists, it does not decide.** Nothing automatically assigns liability or denies
   a claim.
+
+---
+
+## How the AI works
+
+### Reading the CIN
+
+```mermaid
+flowchart LR
+    P[Photo] --> Q[imagePrep:<br/>crop · denoise ·<br/>flatten · sharpen]
+    Q --> R[Tesseract<br/>ara+fra]
+    Q --> S[Vision model<br/>transcribe only]
+    R --> T[parseCin]
+    S --> T
+    T --> U[Best result wins<br/>by fields found]
+```
+
+The vision model **transcribes only**; it does not assign fields. Asked to extract
+directly it put the mother's name in the holder's surname, so label→value mapping is
+left to the deterministic parser.
+
+`cin.ts` handles four transcription layouts, because OCR emits the same card
+differently — `label value` inline, label↵value, value↵label (vision models scan the
+RTL value column first), and all-labels-then-all-values. Orientation is detected per
+document; guessing wrong shifts every field by one. Identity fields are read **only
+from the front** and mother/address **only from the back**, which makes cross-face
+confusion structurally impossible.
+
+Card specifics that break generic parsers: place of birth is labelled `مكانها`, not
+`مكان الولادة`; dates use French-derived Tunisian month names (`جوان`, `أفريل`,
+`جويلية`), so a `dd/mm/yyyy` regex finds nothing.
+
+### Damage localisation
+
+Sobel gradients, then per-block **orientation entropy × magnitude × density**. Smooth
+panels and straight body lines have coherent edge directions; crumpled metal does not.
+This is signal processing, **not a trained CNN** — it localises damage and grades
+severity, but does not name the part.
+
+### Fraud detection
+
+```mermaid
+flowchart TD
+    A[Statement<br/>FR/AR/derja/EN] --> B[Rules engine]
+    C[Damage photos] --> B
+    D[Car diagram] --> B
+    A --> E[llama3.1]
+    C --> E
+    B --> F[Base score]
+    E --> G[±22 max]
+    F --> H[Risk + verdict]
+    G --> H
+```
+
+**Rules carry the score.** A claimed impact on the face *opposite* the damage is worth
+58 points on its own — the metal cannot lie. The LLM reads the raw multilingual
+statement but is capped at **±22 points**, so a hallucinating model cannot brand a claim
+fraudulent alone, and a stopped Ollama cannot make a fraudulent claim look clean.
+
+Three guards, each added because the model actually failed that way:
+
+1. **Corroboration gate** — an LLM finding the rules do not corroborate is shown as
+   "à vérifier", never as established. It once reported "both drivers stationary" when
+   one plainly said he was braking.
+2. **Physics in the prompt** — in a rear-end collision one car's front hits the other's
+   rear. Without stating that, the model flagged correct geometry as a contradiction.
+3. **Summary guard** — it cannot narrate "tout est cohérent" over a proven physical
+   contradiction.
+
+### Repair estimation
+
+Damaged sides + severity → parts from the local catalogue. The decisive rule is
+`repairable`: steel panels are beaten out and refinished, plastic/glass/optics are
+replaced. Getting that wrong is the difference between a 300 and a 1200 TND line.
+
+Parts + labour + paint + 19% VAT, with a ±25% band widened when vision confidence is
+low. Four purchase links per part. `PiecesAutos.tn` is a Google Custom Search Engine
+whose query lives in the URL **fragment** (`#gsc.q=`), not the query string — building
+it as `?q=` opens an empty page with no error.
 
 ---
 
@@ -334,9 +460,46 @@ WebSocket messages: `attach`, `position`, `impact`, `confirm`, `evidence`.
 | `POST` | `/api/aml/screen` | AML/PEP screening (fictional list) |
 | `POST` | `/api/profile/sign` | ECDSA P-256 profile signature |
 | `POST` | `/api/profile/verify` | verify a signature |
-| `POST` | `/api/policy/step` | next adaptive policy question |
 | `GET` | `/api/netinfo` | LAN address for the QR + all candidates |
 | `GET` | `/api/health` | service health |
+
+### Policy
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/policy/step` | next adaptive question (legacy single-answer flow) |
+| `POST` | `/api/policy/options` | **every** policy scored and priced for these answers |
+
+`/api/policy/options` returns the whole shelf with a `fit` percentage and a TND premium
+per tier, plus `declinable: true` — subscribing is never required to finish eKYC.
+
+### AI services
+
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/api/system/status` | honest per-dependency badge: `llm`, `vision`, `db` |
+| `POST` | `/api/cin/read` | CIN transcription by the vision model → `{ lines }` |
+| `POST` | `/api/estimate` | repair estimate from analysed photos |
+
+`/api/cin/read` deliberately returns raw **lines**, not fields — see
+[How the AI works](#how-the-ai-works).
+
+### eKYC reuse
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/ekyc/profile` | store a completed eKYC against an account |
+| `GET` | `/api/ekyc/profile?accountKey=` | look it up → `{ found, profile }` |
+
+Once a row exists the app skips verification entirely. A database outage degrades to
+asking again rather than locking anyone out.
+
+### Adjuster queue
+
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/api/cases/flagged?limit=` | cases ordered by fraud risk |
+| `GET` | `/api/cases/:caseId` | one case with participants, photos, estimates, findings |
 
 ---
 
@@ -352,6 +515,9 @@ cases (case_id)
   ├── repair_estimates  one row per costed part
   ├── fraud_findings    one row per contradiction found
   └── constats          one constat per driver (sketch + circumstances as JSON)
+
+ekyc_profiles           standalone, keyed by account — identity belongs to the
+                        person, not to a case, so it survives across claims
 ```
 
 Triage columns on `cases`:
@@ -460,25 +626,48 @@ is built around that:
 
 **No flag establishes liability or denies a claim.**
 
-### Unmerged work
+### CIN reading accuracy
 
-Branch `claude/fraud-detection-car-damage-9dee85` contains a complete backend that is
-**not merged into `main`**:
+The hardest part of this project, and still the weakest link. Measured on a synthetic
+card plus a deliberately degraded photo (tilt, glare, low contrast, desk background),
+scoring exact field matches after parsing:
 
-| Module | Purpose |
-|---|---|
-| `server/llm.mjs` | Ollama client (JSON mode, timeouts, model selection) |
-| `server/fraudEngine.mjs` | LLM + rules fraud detection, scoring and findings |
-| `server/repairEstimate.mjs` | repair estimation in TND |
-| `server/marketData.mjs` | parts catalogue, labour rates, shop links |
-| `server/db.mjs` | MySQL persistence + disk spool |
-| `src/lib/cin.ts` | Tunisian CIN field extraction (Arabic + French) |
-| `src/lib/validation.ts` | upload validation (real file type, sharpness, glare) |
+| | `qwen2.5vl:3b` | `qwen2.5vl:7b` |
+|---|---|---|
+| clean front | 2/5 · 7 s | 3/5 · 34 s |
+| degraded photo | 1/5 · 18 s | 3/5 · 54 s |
+| back | 3/3 · 17 s | 3/3 · 27 s |
 
-Both `main` and that branch modify `server/index.mjs` and `server/sessions.mjs`, so the
-merge will need manual conflict resolution.
+7b reads better but takes ~90 s for both sides, which is why 3b is the default.
 
----
+Most observed failures were **parsing, not recognition** — the models read the glyphs
+correctly and the fields were then mapped wrong. Those are fixed (four layouts, front/back
+field separation, OCR word-splitting tolerance). What remains is genuine misrecognition,
+mostly digits: a wrong digit in the CIN is not currently caught, because a misread
+8-digit number is still structurally valid.
+
+**Cross-validating the two engines** — flagging the field when Tesseract and the vision
+model disagree — is the obvious next step and is not implemented.
+
+Every field is editable on the confirmation screen, by design: Arabic OCR on a phone
+photo will never be perfect, so a partial read must never block the user.
+
+### Calibrated by eye, not by data
+
+- **Constat PDF coordinates** — the FTUSA template has no text layer, so field positions
+  were calibrated against rendered pages over four passes. They are correct for this
+  template; a different edition would need recalibration.
+- **Liveness thresholds** — `EAR < 0.21` for a blink, yaw `< 0.4 / > 0.6` for a turn.
+  Taken from published values, not tuned against real users, lighting or cameras.
+
+### Not implemented
+
+- No logout control on the accident screen — you can reach the claim flow and have no
+  way back to the login screen without clearing browser storage.
+- Parts links are **searches**, not price lookups. The TND figures come from the local
+  catalogue, not from the linked retailers.
+- The Streamlit prototype in `ekyc-streamlit/` is an earlier, separate implementation
+  kept for reference; it is not part of the running app.
 
 ## Licence and data
 
