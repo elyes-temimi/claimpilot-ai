@@ -126,6 +126,45 @@ export interface PersistenceState {
   reason?: string;
 }
 
+/** One costed part on the repair estimate. */
+export interface EstimateLine {
+  side: string;
+  partKey: string;
+  partLabel: string;
+  action: 'repair' | 'replace';
+  severity: string;
+  fromDiagram: boolean;
+  partsCost: number;
+  labourCost: number;
+  labourHours: number;
+  total: number;
+  currency: string;
+  source: string;
+  shops: { id: string; name: string; kind: string; note: string; url: string }[];
+}
+
+export interface RepairEstimate {
+  currency: string;
+  tier: string;
+  tierLabel: string;
+  city: string;
+  lines: EstimateLine[];
+  partsTotal: number;
+  labourTotal: number;
+  subtotal: number;
+  vatRate: number;
+  vat: number;
+  total: number;
+  rangeLow: number;
+  rangeHigh: number;
+  confidence: number;
+  sides: string[];
+  disclaimer: string;
+  hiddenDamage: string[];
+  rationale: string | null;
+  llmUsed: boolean;
+}
+
 export interface SessionState {
   code: string;
   caseId: string;
@@ -137,7 +176,8 @@ export interface SessionState {
   analysis?: ConsistencyReport | null;
   fraud?: FraudReport | null;
   fraudPending?: boolean;
-  estimates?: Record<string, unknown> | null;
+  /** Repair estimate per driver role ('A' | 'B'). */
+  estimates?: Record<string, RepairEstimate> | null;
   persistence?: PersistenceState | null;
 }
 

@@ -1892,3 +1892,25 @@ body {
 .liveness-turns { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 600; color: #64748b; }
 .liveness-turns .on { color: #15803d; }
 .pose-now { font-size: 22px; color: #1d4ed8; min-width: 28px; text-align: center; }
+
+/* ---- Repair estimate shown at the end of the claim ---- */
+.estimate-hero { text-align: center; padding: 10px 0 6px; }
+.estimate-total { font-size: 34px; font-weight: 800; letter-spacing: -.5px; color: #0f172a; }
+.estimate-total small { font-size: 15px; font-weight: 600; opacity: .6; margin-left: 4px; }
+.estimate-range { font-size: 13px; color: #64748b; margin-top: 2px; }
+.estimate-breakdown { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 13px; }
+.estimate-breakdown div { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed rgba(148,163,184,.3); }
+.estimate-lines { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.estimate-line { padding: 9px 11px; border-radius: 10px; background: rgba(148,163,184,.10); }
+.estimate-line-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.estimate-part { font-weight: 600; font-size: 14px; }
+.estimate-line-total { margin-left: auto; white-space: nowrap; }
+.estimate-line-sub { font-size: 12px; color: #64748b; margin-top: 3px; }
+.estimate-shops { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.estimate-shops a { font-size: 12px; color: #1d4ed8; text-decoration: none; border-bottom: 1px dotted currentColor; }
+.chip-warn { background: rgba(245,158,11,.18) !important; color: #b45309 !important; }
+.estimate-rationale { font-style: italic; margin-top: 10px; }
+.estimate-disclaimer { margin-top: 8px; opacity: .7; font-size: 11.5px; }
+.fraud-line.high { color: #b91c1c; }
+.fraud-line.medium { color: #b45309; }
+.fraud-line.low { color: #15803d; }

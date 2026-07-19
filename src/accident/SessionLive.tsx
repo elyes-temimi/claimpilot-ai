@@ -5,6 +5,7 @@ import { EvidenceStage } from '../evidence/EvidenceStage';
 import { CarDiagram } from './CarDiagram';
 import { ConstatForm } from './ConstatForm';
 import { downloadConstatPdf } from './constatPdfFill';
+import { EstimateCard } from './EstimateCard';
 import type { ParticipantConstat } from './constatTypes';
 import {
   distanceMeters,
@@ -222,10 +223,13 @@ export function SessionLive({
           {pdfError && <p className="scan-warning" role="alert">⚠️ {pdfError}</p>}
 
           {session.fraud && (
-            <p className="fine center">
-              Analyse: risque {session.fraud.risk.toUpperCase()} · intégrité{' '}
-              {session.fraud.integrityScore}/100
+            <p className={`fine center fraud-line ${session.fraud.risk}`}>
+              Analyse anti-fraude : risque <strong>{session.fraud.risk.toUpperCase()}</strong> ·
+              intégrité {session.fraud.integrityScore}/100 · {session.fraud.verdict}
             </p>
+          )}
+          {session.fraudPending && (
+            <p className="fine center">🧠 Analyse anti-fraude en cours…</p>
           )}
           {session.persistence && (
             <p className="fine center">
@@ -235,6 +239,11 @@ export function SessionLive({
             </p>
           )}
 
+        </div>
+
+        {session.estimates?.[me.role] && <EstimateCard estimate={session.estimates[me.role]} />}
+
+        <div className="card">
           <button className="btn btn-ghost btn-wide" onClick={goHome}>
             🏠 Retour à l'accueil
           </button>
